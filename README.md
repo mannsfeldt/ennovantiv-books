@@ -104,7 +104,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 
 ## Updating the app
 
-Each file is referenced with a version tag (`?v=20261014` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
+Each file is referenced with a version tag (`?v=2026101402` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
 
 ## Files
 

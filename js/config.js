@@ -8,8 +8,8 @@ window.BOOKS_CONFIG = {
   appName: 'Ennovantiv Books',
 
   // From Entra ID (Azure) > App registrations > your app > Overview
-  clientId: 'PASTE-APPLICATION-CLIENT-ID-HERE',
-  tenantId: 'PASTE-DIRECTORY-TENANT-ID-HERE',
+  clientId: '749232ca-bd55-4054-b691-84d534ea147e',
+  tenantId: '2159ca4c-7474-40a2-b704-8040dd9494fb',
 
   // Sharing link to the workbook (Excel for the web > Share > Copy link).
   // Can also be set/changed from the app's Settings screen (e.g. each new year).
