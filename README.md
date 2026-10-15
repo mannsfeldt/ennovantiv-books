@@ -91,6 +91,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
   - included entries dated outside the period.
 
   You tick *All time for this period has been entered* to continue.
+- **Planned invoice numbers:** you can type the expected number (e.g. `WF2611`) on time entries ahead of time in the spreadsheet. The app treats a number as *billed* only once Invoiced is ticked; until then the Time list shows it as planned (`→ WF2611`). It flags it in amber (`→ WF2611?`) if the entry isn't billable or the client's next invoice has a different number. When you record the invoice, the checklist lists entries labelled for it that it doesn't include, and offers to clear those labels.
 - **Invoice check** (Invoices page): once tracking is on, any time entry marked Invoiced without an invoice number appears here, usually because it was entered or ticked by hand in Excel. In the Time list it shows as *Invoiced, no #*. Pick which invoice each one was on and save; the app doesn't guess. After recording an invoice, the app also re-reads the table and warns if any included entry didn't get the number.
 - **Invoices** use the same rules as the FILTER formulas on *Invoice Creator*: hourly projects with uninvoiced billable hours, fixed-fee projects with an amount this invoice or status `Active*`, and uninvoiced disbursements. HST is 13%, terms are net 30, and the number is client `Short` + `YYMM`. On fixed-fee lines, *This invoice* is the last column so the amounts sum to the subtotal. **Print / Save PDF** uses the browser's print dialog. **Record invoice** adds the row to `Invoices` and (optionally) sets `Invoiced = TRUE` on the included Tasks and Disbursements rows. It tells you exactly how many rows before it writes.
 - Each write shows the exact cell range it touched (e.g. `Time!A755:I755`). The dashboard keeps a log of recent writes made from that device.
@@ -104,7 +105,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 
 ## Updating the app
 
-Each file is referenced with a version tag (`?v=2026101402` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
+Each file is referenced with a version tag (`?v=2026101501` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
 
 ## Files
 

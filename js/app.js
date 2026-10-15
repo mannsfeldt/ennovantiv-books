@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026101402';
-import { DemoStore } from './store-demo.js?v=2026101402';
-import { compressImage, readReceipt } from './receipt.js?v=2026101402';
+import { GraphStore } from './store-graph.js?v=2026101501';
+import { DemoStore } from './store-demo.js?v=2026101501';
+import { compressImage, readReceipt } from './receipt.js?v=2026101501';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -386,7 +386,14 @@ const TIME = {
 function timeStatus(r) {
   const col = linkCol('Tasks');
   const no = col && clean(r[col]);
-  if (no) return `<a class="pill ${r.Paid ? '' : 'solid'}" href="#/invoice/${encodeURIComponent(no)}" onclick="event.stopPropagation()" title="${r.Paid ? 'Paid' : 'Invoiced, not yet paid'}">${esc(no)}${r.Paid ? ' ✓' : ''}</a>`;
+  if (no && r.Invoiced === true) return `<a class="pill ${r.Paid ? '' : 'solid'}" href="#/invoice/${encodeURIComponent(no)}" onclick="event.stopPropagation()" title="${r.Paid ? 'Paid' : 'Invoiced, not yet paid'}">${esc(no)}${r.Paid ? ' ✓' : ''}</a>`;
+  if (no) {
+    const client = rows('Clients').find(c => c.Name === projectRow(r.Project)?.Client);
+    const bd = nextBillingDay().iso, expected = client ? clean(client.Short) + bd.slice(2, 4) + bd.slice(5, 7) : no;
+    return r.Billable && expected === no
+      ? `<span class="pill" title="Planned for ${esc(no)} (${weekday(bd)}); confirmed when the invoice is recorded">→ ${esc(no)}</span>`
+      : `<span class="pill warn" title="${r.Billable ? `Labelled ${esc(no)}, but the next invoice for this client is ${esc(expected)}` : `Labelled ${esc(no)} but not billable, so it won't be invoiced`}">→ ${esc(no)}?</span>`;
+  }
   if (r.Invoiced && col && trackingStart() !== null && num(r.Date) >= trackingStart()) return `<a class="pill warn" href="#/invoices" onclick="event.stopPropagation()" title="Marked Invoiced without an invoice number. See Invoice check">Invoiced, no #</a>`;
   if (r.Invoiced) return `<span class="pill solid">${r.Paid ? 'Paid' : 'Invoiced'}</span>`;
   if (!r.Billable) return '';
@@ -722,7 +729,10 @@ function computeInvoice(clientName, dateISO) {
 }
 
 const rowClient = (table, r) => table === 'Tasks' ? projectRow(r.Project)?.Client : r.Client;
-const stampedWith = (table, number) => { const col = linkCol(table); return col ? rows(table).filter(r => clean(r[col]) === clean(number)) : []; };
+// Rows billed on an invoice: carrying its number AND ticked Invoiced. A number
+// on an uninvoiced row is only a plan (e.g. typed ahead in the spreadsheet).
+const stampedWith = (table, number) => { const col = linkCol(table); return col ? rows(table).filter(r => r.Invoiced === true && clean(r[col]) === clean(number)) : []; };
+const plannedFor = (table, number) => { const col = linkCol(table); return col ? rows(table).filter(r => r.Invoiced !== true && clean(r[col]) === clean(number)) : []; };
 const isTracked = inv => stampedWith('Tasks', inv.Number).length + stampedWith('Disbursements', inv.Number).length > 0;
 
 // Rows that belong to an issued invoice.
@@ -926,7 +936,8 @@ async function recordInvoice(client, date, view) {
   await busy('Checking the workbook…', () => store.loadAll(['Projects', 'Tasks', 'Disbursements', 'Invoices']));
   const inv = computeInvoice(client, date);
   const mark = $('#markinv')?.checked;
-  if (!await preInvoiceCheck(client, date, inv, 'record')) return;
+  const chk = await preInvoiceCheck(client, date, inv, 'record');
+  if (!chk) return;
   await busy('Recording invoice…', async () => {
     const res = await store.addRow('Invoices', { Date: toSerial(date), Client: client, Number: inv.number, Amount: inv.total });
     logActivity('Recorded invoice', res.address, `${inv.number} · ${money(inv.total)}`);
@@ -939,6 +950,8 @@ async function recordInvoice(client, date, view) {
       const tl = linkCol('Tasks'), dl = linkCol('Disbursements');
       if (tl && inv.tasks.length) await store.setColumn('Tasks', inv.tasks, tl, inv.number);
       if (dl && disbRows.length) await store.setColumn('Disbursements', disbRows, dl, inv.number);
+      // Labels typed ahead for this invoice on rows it didn't include
+      if (tl && chk.clearStray && chk.stray.length) await store.setColumn('Tasks', chk.stray, tl, '');
       logActivity('Marked invoiced', `Tasks ×${inv.tasks.length}, Disbursements ×${inv.disb.length}`, inv.number);
     }
     await store.loadAll(['Projects', 'Tasks', 'Disbursements', 'Invoices']);
@@ -1318,7 +1331,7 @@ function trackingStart() {
   const col = linkCol('Tasks');
   if (!col) return null;
   if (_track.key === store.tables.Tasks) return _track.start;
-  const numbers = new Set(rows('Tasks').map(r => clean(r[col])).filter(Boolean));
+  const numbers = new Set(rows('Tasks').filter(r => r.Invoiced === true).map(r => clean(r[col])).filter(Boolean));
   const dates = rows('Invoices').filter(i => numbers.has(clean(i.Number))).map(i => num(i.Date));
   const first = dates.length ? Math.min(...dates) : null;
   _track = { key: store.tables.Tasks, start: first === null ? null : billingPeriod(toISO(first)).from };
@@ -1341,7 +1354,13 @@ async function preInvoiceCheck(client, dateISO, inv, action) {
   const later = inv.tasks.filter(r => num(r.Date) > per.to);
   const earlier = inv.tasks.filter(r => num(r.Date) < per.from);
   const unlinked = unlinkedTime().filter(r => projects.has(r.Project));
+  const col = linkCol('Tasks');
+  const included = new Set(inv.tasks.map(r => r._row));
+  const stray = col ? plannedFor('Tasks', inv.number).filter(r => !included.has(r._row)) : [];
+  const relabel = col ? inv.tasks.filter(r => clean(r[col]) && clean(r[col]) !== inv.number) : [];
   const warn = [];
+  if (stray.length) warn.push(`<b>${stray.length} ${stray.length === 1 ? 'entry is' : 'entries are'} labelled ${esc(inv.number)} but ${stray.length === 1 ? 'isn’t' : 'aren’t'} on this invoice</b> (${[...new Set(stray.map(r => esc(r.Project)))].join(', ')}): ${stray.length === 1 ? 'it is' : 'they are'} not billable or ${stray.length === 1 ? 'its' : 'their'} project has nothing to bill.${action === 'record' ? `<label class="check"><input type="checkbox" name="clear" checked> Clear the ${esc(inv.number)} label from ${stray.length === 1 ? 'it' : 'them'} when recording</label>` : ''}`);
+  if (relabel.length) warn.push(`${relabel.length} included ${relabel.length === 1 ? 'entry is' : 'entries are'} labelled with a different number (${[...new Set(relabel.map(r => esc(clean(r[col]))))].join(', ')}); recording will change ${relabel.length === 1 ? 'it' : 'them'} to ${esc(inv.number)}.`);
   if (unlinked.length) warn.push(`<b>${unlinked.length} ${esc(client)} time ${unlinked.length === 1 ? 'entry is' : 'entries are'} marked Invoiced but ${unlinked.length === 1 ? 'has' : 'have'} no invoice number</b>, probably ticked by hand in the spreadsheet. ${unlinked.length === 1 ? 'It isn’t' : 'They aren’t'} on this invoice. <a href="#/invoices" data-close>Review them under Invoice check</a>.`);
   if (nonBill.length) warn.push(`${nonBill.length} non-billable ${nonBill.length === 1 ? 'entry' : 'entries'} (${hrs(nonBill.reduce((s, r) => s + num(r.Hours), 0))} h) on ${esc(client)} projects this period won't be invoiced: ${[...new Set(nonBill.map(r => esc(r.Project)))].join(', ')}.`);
   if (later.length) warn.push(`${later.length} included ${later.length === 1 ? 'entry is' : 'entries are'} dated after ${toISO(per.to)}, the invoice date.`);
@@ -1356,7 +1375,7 @@ async function preInvoiceCheck(client, dateISO, inv, action) {
     ${action === 'record' ? `<p class="dest"><span>Recording adds <b>${esc(inv.number)}</b> (${money(inv.total)}) to the Invoices table${$('#markinv')?.checked ? ` and marks ${inv.tasks.length} time entries and ${inv.disb.length} disbursements as Invoiced${linkCol('Tasks') ? ', with the invoice number' : ''}` : ''}.</span></p>` : ''}
     <label class="check"><input type="checkbox" name="ok" required> All time for this period has been entered</label>
     <div class="actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">${action === 'print' ? 'Print' : 'Record invoice'}</button></div>`, 'wide');
-  return !!data;
+  return data ? { clearStray: action === 'record' && !!data.get('clear'), stray } : null;
 }
 
 // Invoices page card: invoiced time without an invoice number, with a choice
