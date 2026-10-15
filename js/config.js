@@ -36,7 +36,11 @@ window.BOOKS_CONFIG = {
   ],
   companyName: 'Ennovantiv Services Inc.',
   companyClientRow: 'Internal', // Clients row holding your own address/phone/email
-  logoUrl: 'assets/logo.png',   // optional; drop your logo file here
+  logo: {                       // Ennovantiv mark, made from the brand files
+    onDark: 'assets/mark-blue.png',   // header (navy background)
+    onLight: 'assets/mark-navy.png',  // sign-in screen
+    print: 'assets/mark-black.png',   // invoices, time detail, expense reports
+  },
 
   // Invoices are dated the first Monday of the month, or the next business
   // day when that Monday is a holiday. Ontario holidays are built in; add any

@@ -4,6 +4,8 @@
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const SCOPES = ['User.Read', 'Files.ReadWrite.All'];
+const LAST_USER = 'books:lastUser';     // account to sign back in automatically
+const AUTO = 'books:autoSignIn';        // set while an automatic sign-in is under way
 
 export class GraphStore {
   constructor(cfg, schema) {
@@ -25,16 +27,42 @@ export class GraphStore {
       cache: { cacheLocation: 'localStorage' },
     });
     await this.msal.initialize();
-    const res = await this.msal.handleRedirectPromise();
+    let res = null;
+    try { res = await this.msal.handleRedirectPromise(); }
+    catch (e) {
+      // An automatic sign-in that Microsoft couldn't finish just falls back to the button
+      if (!sessionStorage.getItem(AUTO)) throw e;
+    }
     if (res?.account) this.msal.setActiveAccount(res.account);
-    const acct = this.msal.getActiveAccount() || this.msal.getAllAccounts()[0];
+    let acct = this.msal.getActiveAccount() || this.msal.getAllAccounts()[0];
+
+    // MSAL keeps its saved sign-in encrypted with a key that is dropped when the
+    // browser or home-screen app closes, so a fresh open has no account. If you
+    // have signed in here before, sign in again automatically: Microsoft still
+    // has its own session (the "stay signed in" one), so this needs no password
+    // until your organization's session policy asks for one.
+    const hint = localStorage.getItem(LAST_USER);
+    if (!acct && hint) {
+      try {
+        const r = await this.msal.ssoSilent({ scopes: SCOPES, loginHint: hint }); // works where 3rd-party cookies are allowed
+        acct = r.account;
+      } catch {
+        if (!sessionStorage.getItem(AUTO)) {   // once per app session, so it can't loop
+          sessionStorage.setItem(AUTO, '1');
+          await this.msal.loginRedirect({ scopes: SCOPES, loginHint: hint });
+          return new Promise(() => {});          // the page is navigating to Microsoft
+        }
+      }
+    }
     if (!acct) return null;
+    sessionStorage.removeItem(AUTO);
     this.msal.setActiveAccount(acct);
     this.account = acct;
+    localStorage.setItem(LAST_USER, acct.username);
     return { name: acct.name, email: acct.username.toLowerCase() };
   }
-  login() { return this.msal.loginRedirect({ scopes: SCOPES, prompt: 'select_account' }); }
-  logout() { return this.msal.logoutRedirect({ account: this.account }); }
+  login() { sessionStorage.removeItem(AUTO); return this.msal.loginRedirect({ scopes: SCOPES, prompt: 'select_account' }); }
+  logout() { localStorage.removeItem(LAST_USER); return this.msal.logoutRedirect({ account: this.account }); }
 
   async token() {
     try {
@@ -42,7 +70,7 @@ export class GraphStore {
       return r.accessToken;
     } catch (e) {
       if (e instanceof msal.InteractionRequiredAuthError) {
-        await this.msal.acquireTokenRedirect({ scopes: SCOPES });
+        await this.msal.acquireTokenRedirect({ scopes: SCOPES, loginHint: this.account?.username });
       }
       throw e;
     }

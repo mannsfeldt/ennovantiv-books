@@ -57,11 +57,14 @@ Open the site and sign in. On **Settings** (gear icon on phones), paste the work
 ### 5. First test
 Log a small time entry and check that it appears at the bottom of the Tasks table in Excel, with the `Short` column calculated. Then open it in the app and **Delete row**.
 
+### Staying signed in
+The first time, sign in and answer **Yes** to Microsoft's *Stay signed in?*. After that, opening the app signs you back in automatically, usually with no screen at all. You only enter your password again when your Microsoft 365 session expires; your organization's policy sets how often (Entra → Conditional Access → *Sign-in frequency*). **Sign out** in Settings turns this off on that device until you sign in again.
+
 ### 6. Put it on your phone
 Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Add to Home Screen**. It opens like an app.
 
 ### Optional
-- **Logo:** save your logo as `assets/logo.png` (light-background version). It's used in the header and on invoices. Until then, a text wordmark is shown.
+- **Logo:** the Ennovantiv mark is in `assets/` in three versions, made from the brand files. `mark-blue.png` is for the navy header, `mark-navy.png` for light screens, and `mark-black.png` for invoices and reports, so they print cleanly in B&W. The app icons and favicons (`apple-touch-icon.png`, `icon-*.png`, `favicon-*.png`) use the blue mark on Ennovantiv navy. Paths are set in `logo` in `js/config.js`.
 - **Receipt links in Excel:** add a column named `Receipt` to the Expenses table. The app will then fill it with the link to the uploaded photo.
 - **Invoice tracking (recommended, do this before the next billing day):** in **Settings → Invoice tracking**, click *Add Invoice column*. Excel adds an `Invoice` column to the Tasks and Disbursements tables. On the Time sheet, the `x` in J187 and the `=SUM(Projects[This Invoice])` in K1 move one column right, and the formula keeps working. From then on, recording an invoice writes its number (e.g. `WF2611`) on every included row. That's the record of what was billed when, which can't be reconstructed later because time can become billable long after it was worked. Invoices recorded before tracking are left as they are.
 - **Try it without signing in:** open the site with `?demo` on the end (e.g. `…/ennovantiv-books/?demo`). It uses made-up sample data and saves nothing.
@@ -105,7 +108,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 
 ## Updating the app
 
-Each file is referenced with a version tag (`?v=2026101501` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
+Each file is referenced with a version tag (`?v=2026101502` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
 
 ## Files
 

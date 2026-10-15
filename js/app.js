@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026101501';
-import { DemoStore } from './store-demo.js?v=2026101501';
-import { compressImage, readReceipt } from './receipt.js?v=2026101501';
+import { GraphStore } from './store-graph.js?v=2026101502';
+import { DemoStore } from './store-demo.js?v=2026101502';
+import { compressImage, readReceipt } from './receipt.js?v=2026101502';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -66,7 +66,7 @@ async function boot() {
   }
   if (!user) {
     return screen(`
-      <div class="brandmark big">${brandMark()}</div>
+      <div class="brandmark big">${brandMark('light')}</div>
       <h1>${esc(CFG.appName)}</h1>
       <p class="muted">Time, expenses, receipts, mileage and invoices, written straight into your bookkeeping workbook.</p>
       <button class="btn primary lg" id="signin">Sign in with Microsoft</button>
@@ -116,8 +116,12 @@ function screen(html, after) {
   after?.();
 }
 
-function brandMark() {
-  return `<img src="${esc(CFG.logoUrl)}" alt="" onerror="this.remove()"><span class="wm">Ennovantiv<small>SERVICES INC</small></span>`;
+// Ennovantiv mark + wordmark. 'dark' = blue mark for the navy header,
+// 'light' = navy mark on white screens, 'print' = solid black for invoices and
+// reports (the brand's B&W rule: black on white, never grey).
+function brandMark(kind = 'print') {
+  const src = { dark: CFG.logo.onDark, light: CFG.logo.onLight, print: CFG.logo.print }[kind];
+  return `<img class="mark" src="${esc(src)}" alt="Ennovantiv"><span class="wm">Ennovantiv<small>SERVICES INC</small></span>`;
 }
 
 // ---------- shell & routing ----------
@@ -136,7 +140,7 @@ const icon = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 function renderShell() {
   document.body.innerHTML = `
     <header class="topbar">
-      <a class="brandmark" href="#/dashboard">${brandMark()}</a>
+      <a class="brandmark" href="#/dashboard">${brandMark('dark')}</a>
       <div class="topbar-right">
         ${DEMO ? '<span class="pill demo" title="Sample data, nothing is saved">DEMO</span>' : ''}
         <a id="filechip" class="filechip" target="_blank" rel="noopener" title="Open the workbook in Excel"><span class="dot off"></span>Not connected</a>
