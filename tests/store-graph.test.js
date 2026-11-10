@@ -41,3 +41,32 @@ test('A-04: a failed re-read after adding a row is not reported as a failed save
   equal(res.address, 'Time!A10:I10');
   assert(res.unverified, 'result says the table could not be re-read');
 }));
+
+const isAdd = (m, p) => m === 'POST' && p.includes('rows/add');
+const isDelete = (m, p) => m === 'POST' && p.endsWith('/delete');
+
+test('A-05: an add that times out after Excel did it is not sent again', withStore(async (store, fake) => {
+  fake.failNext({ when: isAdd, status: 504, apply: true });
+  const res = await store.addRow('Tasks', entry);
+  equal(fake.tables.Tasks.rows.length, 9, 'row count (one new row, not two)');
+  equal(res.address, 'Time!A10:I10');
+}));
+
+test('A-05: an add that times out without arriving reports an error and is not silently repeated', withStore(async (store, fake) => {
+  fake.failNext({ when: isAdd, status: 504, apply: false });
+  await rejects(() => store.addRow('Tasks', entry), /timed out/i);
+  equal(fake.calls.filter(c => c.includes('rows/add')).length, 1, 'add requests sent');
+  equal(fake.tables.Tasks.rows.length, 8, 'row count');
+}));
+
+test('A-05: a throttled (429) add is still retried, since nothing was done', withStore(async (store, fake) => {
+  fake.failNext({ when: isAdd, status: 429, apply: false });
+  await store.addRow('Tasks', entry);
+  equal(fake.tables.Tasks.rows.length, 9, 'row count');
+}));
+
+test('A-05: a delete that times out after Excel did it does not delete the next row too', withStore(async (store, fake) => {
+  fake.failNext({ when: isDelete, status: 504, apply: true });
+  await store.deleteRow('Tasks', store.tables.Tasks.rows[2]);          // "task 3"
+  equal(fake.tables.Tasks.rows.map(r => r[col('Task')]), ['task 1', 'task 2', 'task 4', 'task 5', 'task 6', 'task 7', 'task 8']);
+}));

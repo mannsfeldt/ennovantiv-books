@@ -88,7 +88,10 @@ export class GraphStore {
       if (r.ok) return r.status === 204 ? null : r.json();
 
       const text = await r.text();
-      if ([429, 503, 504].includes(r.status)) {
+      // 429 means throttled before anything happened, so repeating is always safe.
+      // 503/504 can arrive after Excel already did the work, so only repeat
+      // requests that are safe to run twice (opts.once marks the ones that aren't).
+      if (r.status === 429 || ([503, 504].includes(r.status) && !opts.once)) {
         const wait = Number(r.headers.get('Retry-After') || 2) * 1000;
         await new Promise(res => setTimeout(res, wait));
         continue;
@@ -99,13 +102,15 @@ export class GraphStore {
       }
       let msg = text;
       try { msg = JSON.parse(text).error.message; } catch {}
-      throw new Error(`${r.status}: ${msg}`);
+      const err = new Error(`${r.status}: ${msg}`);
+      err.status = r.status;
+      throw err;
     }
     throw new Error('Microsoft Graph is busy, please try again in a minute.');
   }
 
   get wb() { return `/drives/${this.file.driveId}/items/${this.file.itemId}/workbook`; }
-  wbApi(method, path, body) { return this.api(method, this.wb + path, body, { workbook: true }); }
+  wbApi(method, path, body, opts = {}) { return this.api(method, this.wb + path, body, { workbook: true, ...opts }); }
 
   // ---------- file ----------
   async openFile(shareUrl) {
@@ -171,7 +176,19 @@ export class GraphStore {
   async addRow(tableName, obj) {
     let t = this.tables[tableName] || await this.loadTable(tableName);
     const values = t.headers.map(h => (h in obj ? obj[h] : null));
-    const res = await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/rows/add`, { index: null, values: [values] });
+    let res;
+    try {
+      res = await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/rows/add`, { index: null, values: [values] }, { once: true });
+    } catch (e) {
+      if (![503, 504].includes(e.status)) throw e;
+      // Timed out: Excel may or may not have added the row. Look for it among
+      // the rows that are new since we last read the table before deciding.
+      const before = t.rows.length;
+      const fresh = await this.loadTable(tableName);
+      const arrived = fresh.rows.slice(before).find(r => values.every((v, i) => v === null || (typeof v === 'string' && v.startsWith('=')) || String(r._raw[i]) === String(v)));
+      if (!arrived) throw new Error(`Excel timed out (${e.status}) and the row has not appeared. Wait a minute, press ↻ and check the list before saving again.`);
+      res = { index: arrived._i };
+    }
     // From here on the row is in the workbook. A problem re-reading it must not
     // be reported as a failed save: the natural reaction is to save again, which
     // would add the row twice. Report it as saved-but-unverified instead.
@@ -232,7 +249,16 @@ export class GraphStore {
   async deleteRow(tableName, row) {
     const t = this.tables[tableName];
     await this.verify(tableName, row);
-    await this.wbApi('POST', this.rangeApi(t.sheet, rowAddress(t, row._row)) + '/delete', { shift: 'Up' });
+    try {
+      await this.wbApi('POST', this.rangeApi(t.sheet, rowAddress(t, row._row)) + '/delete', { shift: 'Up' }, { once: true });
+    } catch (e) {
+      if (![503, 504].includes(e.status)) throw e;
+      // Timed out: deleting again could remove the row that moved up into its
+      // place. If the row is no longer there, Excel did delete it.
+      let stillThere = true;
+      try { await this.verify(tableName, row); } catch (v) { if (/changed in Excel/.test(v.message)) stillThere = false; else throw e; }
+      if (stillThere) throw new Error(`Excel timed out (${e.status}) and the row is still there. Press ↻ and try again.`);
+    }
     await this.loadTable(tableName);
     return { address: `${t.sheet}!${rowAddress(t, row._row)}` };
   }
@@ -264,7 +290,7 @@ export class GraphStore {
   async addColumn(tableName, name) {
     const t = this.tables[tableName] || await this.loadTable(tableName);
     if (t.headers.includes(name)) return;
-    await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/columns/add`, { index: null, values: [[name], ...t.rows.map(() => [''])] });
+    await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/columns/add`, { index: null, values: [[name], ...t.rows.map(() => [''])] }, { once: true });
     await this.loadTable(tableName);
   }
 
