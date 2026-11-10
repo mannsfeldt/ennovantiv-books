@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex">
+  <title>Ennovantiv Books tests</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; color: #0B1F3A; }
+    h1 { font-weight: 300; margin: 0 0 .5rem; }
+    #summary { font-weight: 600; margin-bottom: 1rem; }
+    li { list-style: none; margin: .15rem 0; }
+    li.ok::before { content: '✓  '; color: #5B7FD4; }
+    li.fail::before { content: '✗  '; color: #B26B00; }
+    li.fail { color: #B26B00; } pre { margin: .2rem 0 .6rem 1.5rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Ennovantiv Books tests</h1>
+  <div id="summary">Running…</div>
+  <ul id="results"></ul>
+  <script type="module" src="run.js"></script>
+</body>
+</html>

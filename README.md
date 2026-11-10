@@ -110,6 +110,16 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 
 Each file is referenced with a version tag (`?v=2026101502` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
 
+## Tests
+
+There is no build step and no dependencies. Run the tests in a browser:
+
+```bash
+python3 tests/serve.py
+```
+
+Then open <http://localhost:8766/tests/>. `tests/store-graph.test.js` checks the Excel data layer against a fake Microsoft Graph (including time-outs and rows moved by someone else). `tests/app.test.js` drives the real app in demo mode. The tests only run on localhost, never on the live site.
+
 ## Files
 
 ```

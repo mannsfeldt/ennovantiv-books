@@ -1,0 +1,50 @@
+// End-to-end tests: drive the real app in demo mode (sample data, no sign-in)
+// inside an iframe and check what it writes to the demo workbook.
+import { test, assert, equal, until, sleep } from './harness.js';
+
+// A fresh copy of the app for each test, so sample data never leaks between tests.
+export async function openApp(hash = '/dashboard') {
+  for (const k of Object.keys(localStorage)) if (/^books:(pendingInvoice|printed:)/.test(k)) localStorage.removeItem(k);
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'width:1200px;height:900px;border:0;position:absolute;left:-9999px;top:0';
+  frame.src = `../index.html?demo&t=${Date.now()}#${hash}`;
+  document.body.appendChild(frame);
+  const win = await until(() => frame.contentWindow?.demoStore?.tables?.Tasks && frame.contentDocument.querySelector('#view')?.children.length && frame.contentWindow, 10000, 'the app to load');
+  const doc = win.document, store = win.demoStore;
+  const app = {
+    win, doc, store,
+    confirms: [], answer: true,                     // every confirm() is recorded; answer decides OK/Cancel
+    $: s => doc.querySelector(s),
+    $$: s => [...doc.querySelectorAll(s)],
+    rows: name => store.tables[name].rows,
+    async go(h) { win.location.hash = h; await sleep(60); },
+    form: () => doc.querySelector('#entry'),
+    set(name, value) {                              // fill a form field the way a person would
+      const el = doc.querySelector('#entry').elements[name];
+      if (el.type === 'checkbox') el.checked = value; else el.value = value;
+      el.dispatchEvent(new win.Event('input', { bubbles: true }));
+      el.dispatchEvent(new win.Event('change', { bubbles: true }));
+    },
+    async save() { doc.querySelector('#entry').requestSubmit(); await app.idle(); },
+    async idle() { await sleep(30); await until(() => doc.querySelector('#busy')?.hidden !== false, 8000, 'the app to finish saving'); await sleep(30); },
+    async edit(table, row) { doc.querySelector(`#listwrap tr[data-row="${row._row}"]`).click(); await sleep(40); },
+    toasts: () => [...doc.querySelectorAll('.toast')].map(t => t.textContent),
+    close() { frame.remove(); },
+  };
+  win.confirm = msg => { app.confirms.push(String(msg)); return app.answer; };
+  win.print = () => { app.printed = (app.printed || 0) + 1; };
+  return app;
+}
+// run a test with an app that is always cleaned up
+export const withApp = (hash, fn) => async () => { const app = await openApp(hash); try { await fn(app); } finally { app.close(); } };
+
+test('app: logging time adds one row to the Tasks table', withApp('/time', async app => {
+  const before = app.rows('Tasks').length;
+  app.set('Project', 'Substation Upgrade');
+  app.set('Hours', '2.5');
+  app.set('Task', 'Cable sizing');
+  await app.save();
+  equal(app.rows('Tasks').length, before + 1, 'row count');
+  const row = app.rows('Tasks').at(-1);
+  equal([row.Project, row.Hours, row.Task, row.Billable, row.Invoiced], ['Substation Upgrade', 2.5, 'Cable sizing', true, false]);
+}));
