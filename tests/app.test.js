@@ -247,3 +247,38 @@ test('A-06: no warning when the invoice is the same as the one printed', withApp
   assert(!dlg.querySelector('input[name=changed]'), 'no extra tick');
   dlg.querySelector('button[value=cancel]').click();
 }));
+
+const invoicedEntry = app => app.rows('Tasks').find(r => r.Invoiced === true);
+const sameRow = (app, row) => app.rows('Tasks').find(r => r._row === row._row);
+
+test('A-07: changing the hours of an invoiced time entry asks first, and leaves it alone if declined', withApp('/time', async app => {
+  await app.showAll();
+  const row = invoicedEntry(app);
+  await app.edit('Tasks', row);
+  app.set('Hours', String(row.Hours + 1));
+  app.confirms.length = 0; app.answer = false;
+  await app.save();
+  assert(app.confirms.some(c => /billed|invoice/i.test(c)), `asked before changing billed hours; confirms: ${JSON.stringify(app.confirms)}`);
+  equal(sameRow(app, row).Hours, row.Hours, 'hours unchanged');
+}));
+
+test('A-07: correcting only the description of an invoiced entry does not ask', withApp('/time', async app => {
+  await app.showAll();
+  const row = invoicedEntry(app);
+  await app.edit('Tasks', row);
+  app.set('Task', 'typo fixed');
+  app.confirms.length = 0;
+  await app.save();
+  equal(app.confirms, [], 'no confirmation');
+  equal(sameRow(app, row).Task, 'typo fixed');
+}));
+
+test('A-07: deleting an invoiced time entry warns that it was billed', withApp('/time', async app => {
+  await app.showAll();
+  const row = invoicedEntry(app), before = app.rows('Tasks').length;
+  await app.edit('Tasks', row);
+  app.confirms.length = 0; app.answer = false;
+  app.$('#del').click(); await app.idle();
+  assert(/billed|invoice/i.test(app.confirms.join(' ')), `delete warning mentions the invoice; got: ${JSON.stringify(app.confirms)}`);
+  equal(app.rows('Tasks').length, before, 'row kept');
+}));

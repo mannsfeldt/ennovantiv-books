@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111006';
-import { DemoStore } from './store-demo.js?v=2026111006';
-import { compressImage, readReceipt } from './receipt.js?v=2026111006';
+import { GraphStore } from './store-graph.js?v=2026111007';
+import { DemoStore } from './store-demo.js?v=2026111007';
+import { compressImage, readReceipt } from './receipt.js?v=2026111007';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -338,6 +338,15 @@ const TIME = {
   ],
   summary: (shown) => `${hrs(shown.reduce((s, r) => s + num(r.Hours), 0))} h`,
   filterCol: 'Project',
+  // An invoiced entry is part of an invoice that has gone out. Changing what was
+  // billed (or deleting it) alters the billed history, so ask first.
+  billedOn: r => r.Invoiced === true ? (clean(r[cfg().invoiceLinkColumn]) || 'an invoice') : '',
+  guard(editing, values) {
+    const on = editing && TIME.billedOn(editing);
+    const changed = on ? ['Hours', 'Project', 'Billable', 'Invoiced'].filter(k => k in values && values[k] !== editing[k]) : [];
+    return changed.length ? `This entry was billed on ${on}. Changing its ${changed.join(', ')} changes what that invoice covered (the project's billed amount and the invoice's time detail), but not the invoice itself.\n\nSave the change anyway?` : '';
+  },
+  deleteWarning: r => TIME.billedOn(r) ? `This entry was billed on ${TIME.billedOn(r)}. Deleting it changes what that invoice covered.\n\n` : '',
   // PO approved: turn a project's non-billable, uninvoiced time billable so it
   // goes on the next invoice, whatever period it was worked in.
   bulk(shown, project) {
@@ -654,7 +663,7 @@ function viewEntry(spec, view = $('#view'), editing = null) {
   if (editing) {
     $('#cancel').onclick = () => viewEntry(spec, view);
     $('#del').onclick = async () => {
-      if (!confirm(`Delete ${esc(t.sheet)} row ${editing._row} from the workbook? This removes the row in Excel.`)) return;
+      if (!confirm(`${spec.deleteWarning?.(editing) || ''}Delete ${esc(t.sheet)} row ${editing._row} from the workbook? This removes the row in Excel.`)) return;
       const res = await busy('Deleting…', () => store.deleteRow(spec.table, editing));
       logActivity(`Deleted ${spec.noun}`, res.address);
       toast(`Deleted row ${esc(res.address)}`, 'info');
@@ -682,6 +691,8 @@ function viewEntry(spec, view = $('#view'), editing = null) {
     }
     if (!editing) for (const fd of spec.fields) if (fd.editOnly) values[fd.col] = false;
     spec.derive?.(values, editing);
+    const guard = spec.guard?.(editing, values);
+    if (guard && !confirm(guard)) return;
     // remember sticky values
     const st = {};
     fields.filter(f => f.sticky).forEach(f => st[f.col] = values[f.col]);
