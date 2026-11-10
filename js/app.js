@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111008';
-import { DemoStore } from './store-demo.js?v=2026111008';
-import { compressImage, readReceipt } from './receipt.js?v=2026111008';
+import { GraphStore } from './store-graph.js?v=2026111009';
+import { DemoStore } from './store-demo.js?v=2026111009';
+import { compressImage, readReceipt } from './receipt.js?v=2026111009';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -170,6 +170,17 @@ function route() {
   window.scrollTo(0, 0);
 }
 
+// The year this workbook holds: from its file name ("Bookkeeping 2026.xlsx"),
+// otherwise the most common year among its time entries. Each device keeps its
+// own workbook link, so one left on last year's file must not go unnoticed.
+function workbookYear() {
+  const named = /(20\d\d)/.exec(store.file?.name || '');
+  if (named) return named[1];
+  const count = {};
+  for (const r of rows('Tasks')) { const y = toISO(r.Date).slice(0, 4); if (y) count[y] = (count[y] || 0) + 1; }
+  return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || null;
+}
+
 // ---------- period filter ----------
 // Each workbook holds one year, so "This year" shows every row.
 const PERIODS = { today: 'Today', week: 'This week', lastweek: 'Last week', d7: 'Last 7 days', d14: 'Last 14 days', month: 'This month', lastmonth: 'Last month', year: 'This year' };
@@ -254,6 +265,7 @@ function viewDashboard(view) {
 
   view.innerHTML = `
     <div class="page-head"><h1>Hello${me ? ', ' + esc(me.split(' ')[0]) : ''}</h1><p class="muted">${longDate(todayISO())}</p></div>
+    ${workbookYear() && workbookYear() !== yr ? `<p class="warnbox">It is ${yr}, but this device is connected to <b>${esc(store.file.name)}</b>, the ${workbookYear()} workbook. New entries would go into that file. Paste the ${yr} workbook's link in <a href="#/settings">Settings</a>.</p>` : ''}
     <div class="quick">
       <a class="btn primary" href="#/time">+ Time</a>
       <a class="btn primary" href="#/expenses/scan">Scan receipt</a>
@@ -602,7 +614,7 @@ function viewEntry(spec, view = $('#view'), editing = null) {
         ${main.map(f => fieldHTML(f, editing)).join('')}
         <div class="checks">${checks.map(f => fieldHTML(f, editing)).join('')}</div>
         ${Object.entries(groups).map(([g, fs]) => `<details class="group" ${fs.some(f => editing?.[f.col]) ? 'open' : ''}><summary>${g}</summary><div class="checks">${fs.map(f => fieldHTML(f, editing)).join('')}</div></details>`).join('')}
-        <p class="dest">${icon('M4 4h16v16H4zM4 9h16M9 4v16')}<span>${editing ? 'Updates' : 'Adds a row to'} table <b>${spec.table}</b> on sheet <b>${esc(t.sheet)}</b>. Formula columns are left to Excel.</span></p>
+        <p class="dest">${icon('M4 4h16v16H4zM4 9h16M9 4v16')}<span>${editing ? 'Updates' : 'Adds a row to'} table <b>${spec.table}</b> on sheet <b>${esc(t.sheet)}</b> of <b>${esc(store.file.name)}</b>. Formula columns are left to Excel.</span></p>
         <div class="actions">
           <button class="btn primary" type="submit">${editing ? 'Save changes' : 'Save'}</button>
           ${editing ? '<button class="btn" type="button" id="cancel">Cancel</button><button class="btn danger" type="button" id="del">Delete row</button>' : '<button class="btn" type="reset" id="clear">Clear</button>'}
@@ -697,7 +709,11 @@ function viewEntry(spec, view = $('#view'), editing = null) {
     }
     if (!editing) for (const fd of spec.fields) if (fd.editOnly) values[fd.col] = false;
     spec.derive?.(values, editing);
-    const odd = spec.check?.(values) || [];
+    const wbYear = workbookYear(), entryYear = toISO(values.Date).slice(0, 4);
+    const odd = [
+      ...(wbYear && entryYear && entryYear !== wbYear ? [`The date is in ${entryYear}, but this is the ${wbYear} workbook (${store.file.name}). Entries for ${entryYear} belong in the ${entryYear} workbook; change the link in Settings.`] : []),
+      ...(spec.check?.(values) || []),
+    ];
     if (odd.length && !confirm(`${odd.join('\n')}\n\nSave it anyway?`)) return;
     const guard = spec.guard?.(editing, values);
     if (guard && !confirm(guard)) return;

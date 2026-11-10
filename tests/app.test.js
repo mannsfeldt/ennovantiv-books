@@ -345,3 +345,32 @@ test('A-10: the checklist flags an hourly project that has hours but no rate', w
   assert(/no rate/i.test(dlg.textContent) && /Substation Upgrade/.test(dlg.textContent), 'checklist names the project with no rate');
   dlg.querySelector('button[value=cancel]').click();
 }));
+
+test('A-09: an entry dated in another year asks before saving into this workbook', withApp('/time', async app => {
+  const before = app.rows('Tasks').length, next = new Date().getFullYear() + 1;
+  fillTime(app); app.set('Date', `${next}-01-05`);
+  app.answer = false;
+  await app.save();
+  assert(app.confirms.some(c => c.includes(String(next)) && /workbook/i.test(c)), `asked about the year; confirms: ${JSON.stringify(app.confirms)}`);
+  equal(app.rows('Tasks').length, before, 'not saved when declined');
+}));
+
+test('A-09: the workbook year comes from the file name, so last year\'s file is caught in January', withApp('/time', async app => {
+  app.store.file.name = 'Bookkeeping 2031.xlsx';            // device still linked to another year's workbook
+  const before = app.rows('Tasks').length;
+  fillTime(app);                                            // dated today
+  app.answer = false;
+  await app.save();
+  assert(app.confirms.some(c => /2031/.test(c)), `asked; confirms: ${JSON.stringify(app.confirms)}`);
+  equal(app.rows('Tasks').length, before);
+}));
+
+test('A-09: the dashboard warns when the connected workbook is for another year', withApp('/time', async app => {
+  app.store.file.name = 'Bookkeeping 2031.xlsx';
+  await app.go('/dashboard');
+  assert(/2031/.test(app.$('#view .warnbox')?.textContent || ''), 'warning names the workbook year');
+}));
+
+test('A-09: entry screens name the workbook they write to', withApp('/time', async app => {
+  assert(app.$('#entry .dest').textContent.includes(app.store.file.name), 'workbook name shown on the form');
+}));
