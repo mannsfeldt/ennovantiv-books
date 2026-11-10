@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111003';
-import { DemoStore } from './store-demo.js?v=2026111003';
-import { compressImage, readReceipt } from './receipt.js?v=2026111003';
+import { GraphStore } from './store-graph.js?v=2026111004';
+import { DemoStore } from './store-demo.js?v=2026111004';
+import { compressImage, readReceipt } from './receipt.js?v=2026111004';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -955,12 +955,12 @@ async function recordInvoice(client, date, view) {
     if (mark) {
       const disbRows = inv.disb.map(d => d.row);
       const progress = n => { $('#busy span').textContent = `Marking time entries… ${n}/${inv.tasks.length}`; };
-      if (inv.tasks.length) await store.setColumn('Tasks', inv.tasks, 'Invoiced', true, progress);
-      if (disbRows.length) await store.setColumn('Disbursements', disbRows, 'Invoiced', true);
-      // Optional link column: lets "Mark paid" find exactly this invoice's rows later
+      // The invoice number (when the table has the column) lets "Mark paid" find
+      // exactly these rows later. It is written before the Invoiced tick, so an
+      // interrupted write leaves rows "planned", never invoiced without a number.
       const tl = linkCol('Tasks'), dl = linkCol('Disbursements');
-      if (tl && inv.tasks.length) await store.setColumn('Tasks', inv.tasks, tl, inv.number);
-      if (dl && disbRows.length) await store.setColumn('Disbursements', disbRows, dl, inv.number);
+      if (inv.tasks.length) await store.setColumns('Tasks', inv.tasks, { ...(tl ? { [tl]: inv.number } : {}), Invoiced: true }, progress);
+      if (disbRows.length) await store.setColumns('Disbursements', disbRows, { ...(dl ? { [dl]: inv.number } : {}), Invoiced: true });
       // Labels typed ahead for this invoice on rows it didn't include
       if (tl && chk.clearStray && chk.stray.length) await store.setColumn('Tasks', chk.stray, tl, '');
       logActivity('Marked invoiced', `Tasks ×${inv.tasks.length}, Disbursements ×${inv.disb.length}`, inv.number);
@@ -1486,7 +1486,7 @@ function viewSettings(view) {
         <ul class="small muted tight">
           <li>The app talks only to Microsoft 365. There is no other server or database.</li>
           <li>Each entry is written as a new row in a named Excel table. Formula columns are left for Excel to calculate.</li>
-          <li>Before editing or deleting a row, the app checks it still matches Excel, so it won't overwrite changes you made in Excel.</li>
+          <li>Before changing rows (an edit, a delete, or a bulk update such as marking time invoiced or paid), the app checks they still match Excel. If the table was sorted or changed meanwhile, it writes nothing and asks you to refresh.</li>
           <li>Receipts are read on this device and saved to your own receipts folder.</li>
         </ul>
       </div>

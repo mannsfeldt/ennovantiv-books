@@ -263,27 +263,49 @@ export class GraphStore {
     return { address: `${t.sheet}!${rowAddress(t, row._row)}` };
   }
 
-  // Write one column on many rows. Consecutive rows go in a single request.
-  async setCells(tableName, header, items, onProgress) {
-    const t = this.tables[tableName];
-    const i = t.headers.indexOf(header);
-    if (i < 0) throw new Error(`Column "${header}" not found in table ${tableName}`);
-    const col = colName(t.startCol + i);
+  // Write cells on many rows: items = [{ row, values: { Header: value, … } }].
+  // Rows are addressed by sheet row number, so first re-read the table and make
+  // sure every target row is still where, and what, it was when the caller's
+  // list was built: a sort or a deleted row in Excel moves them. If anything
+  // differs, nothing is written. Consecutive rows go in a single request.
+  async setRows(tableName, items, onProgress) {
+    const computed = this.schema[tableName]?.computed || [];
+    const fresh = await this.loadTable(tableName);
+    const headers = [...new Set(items.flatMap(it => Object.keys(it.values)))];
+    for (const h of headers) if (!fresh.headers.includes(h)) throw new Error(`Column "${h}" not found in table ${tableName}`);
+    for (const { row } of items) {
+      const live = fresh.rows[row._row - fresh.startRow - 1];
+      const same = live && fresh.headers.every((h, i) => computed.includes(h) || String(live._raw[i]) === String(row._raw[i]));
+      if (!same) throw new Error(`Row ${row._row} of "${fresh.sheet}" changed in Excel since this list was loaded (rows may have been sorted, added or deleted). Nothing was written. Press ↻ and try again.`);
+    }
     const sorted = [...items].sort((a, b) => a.row._row - b.row._row);
     let done = 0;
-    for (let k = 0; k < sorted.length;) {
-      let j = k;
-      while (j + 1 < sorted.length && sorted[j + 1].row._row === sorted[j].row._row + 1) j++;
-      const block = sorted.slice(k, j + 1);
-      await this.wbApi('PATCH', this.rangeApi(t.sheet, `${col}${block[0].row._row}:${col}${block[block.length - 1].row._row}`), { values: block.map(b => [b.value]) });
-      done += block.length;
-      onProgress?.(done);
-      k = j + 1;
+    for (const header of headers) {
+      const col = colName(fresh.startCol + fresh.headers.indexOf(header));
+      const todo = sorted.filter(it => header in it.values);
+      for (let k = 0; k < todo.length;) {
+        let j = k;
+        while (j + 1 < todo.length && todo[j + 1].row._row === todo[j].row._row + 1) j++;
+        const block = todo.slice(k, j + 1);
+        await this.wbApi('PATCH', this.rangeApi(fresh.sheet, `${col}${block[0].row._row}:${col}${block[block.length - 1].row._row}`), { values: block.map(b => [b.values[header]]) });
+        done += block.length;
+        onProgress?.(Math.min(items.length, Math.ceil(done / headers.length)));
+        k = j + 1;
+      }
     }
     await this.loadTable(tableName);
   }
+  // one column, a value per row
+  setCells(tableName, header, items, onProgress) {
+    return this.setRows(tableName, items.map(({ row, value }) => ({ row, values: { [header]: value } })), onProgress);
+  }
+  // one column, the same value on every row
   setColumn(tableName, rowsToSet, header, value, onProgress) {
-    return this.setCells(tableName, header, rowsToSet.map(row => ({ row, value })), onProgress);
+    return this.setRows(tableName, rowsToSet.map(row => ({ row, values: { [header]: value } })), onProgress);
+  }
+  // several columns, the same values on every row; written in the order given
+  setColumns(tableName, rowsToSet, values, onProgress) {
+    return this.setRows(tableName, rowsToSet.map(row => ({ row, values })), onProgress);
   }
 
   // Add an empty column at the right edge of a table (Excel does the insert).

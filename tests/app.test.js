@@ -84,3 +84,50 @@ test('A-04: when the row is saved but cannot be re-read, the app says saved, not
   assert(/Saved/.test(said) && /again/i.test(said), `toast should say it was saved and not to save again; got: ${said}`);
   assert(!/⚠ Failed to fetch/.test(said), 'no bare failure message');
 }));
+
+test('A-02: "Make billable" stops if rows moved since the list was shown', withApp('/time', async app => {
+  await app.showAll();
+  const lf = app.$('#lf'); lf.value = 'Arc Flash Review'; lf.dispatchEvent(new app.win.Event('change')); await sleep(30);
+  app.store.data.Tasks.splice(0, 1);                    // meanwhile someone deletes an earlier entry in Excel
+  const before = JSON.stringify(app.store.data.Tasks);
+  app.$('#bulkgo').click();
+  await app.idle();
+  equal(JSON.stringify(app.store.data.Tasks), before, 'nothing was written');
+  assert(/changed in Excel/.test(app.toasts().join(' ')), 'the app explains why it stopped');
+}));
+
+// ---- invoice helpers ----
+const CLIENT = 'Northwind Utilities';
+const addTracking = async app => { await app.store.addColumn('Tasks', 'Invoice'); await app.store.addColumn('Disbursements', 'Invoice'); };
+async function previewInvoice(app, client = CLIENT) {
+  await app.go('/dashboard'); await app.go('/invoices');
+  const s = app.$('#ic'); s.value = client; s.dispatchEvent(new app.win.Event('change')); await sleep(30);
+  return app.$('#invprev .inv-title dd b').textContent;          // the invoice number
+}
+// tick every required box in the open dialog and confirm it
+async function confirmDialog(app) {
+  const dlg = await until(() => app.$('dialog.modal'), 6000, 'the dialog');
+  dlg.querySelectorAll('input[type=checkbox][required]').forEach(c => { c.checked = true; });
+  const text = dlg.textContent;
+  dlg.querySelector('button[value=ok]').click();
+  await app.idle();
+  return text;
+}
+async function record(app, client = CLIENT) {
+  const number = await previewInvoice(app, client);
+  app.$('#rec').click();
+  await confirmDialog(app);
+  return number;
+}
+const invoiceRows = (app, number) => app.rows('Invoices').filter(r => r.Number === number);
+const clientTasks = app => app.rows('Tasks').filter(r => ['Substation Upgrade', 'Feeder Study'].includes(r.Project) && r.Billable === true);
+
+test('app: recording an invoice adds one Invoices row and ticks and numbers its time entries', withApp('/dashboard', async app => {
+  await addTracking(app);
+  const due = clientTasks(app).filter(r => r.Invoiced !== true).length;
+  assert(due > 0, 'sample data has time to invoice');
+  const number = await record(app);
+  equal(invoiceRows(app, number).length, 1, 'Invoices rows for this number');
+  equal(clientTasks(app).filter(r => r.Invoiced === true && r.Invoice === number).length, due, 'entries ticked and numbered');
+  equal(clientTasks(app).filter(r => r.Invoiced !== true).length, 0, 'entries left unbilled');
+}));

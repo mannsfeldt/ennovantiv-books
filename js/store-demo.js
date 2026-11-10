@@ -1,6 +1,6 @@
 // In-memory store with made-up sample data, same interface as GraphStore.
 // Lets you try the app (?demo) without Microsoft sign-in. Nothing is saved.
-import { parseTable, rowAddress } from './store-graph.js?v=2026111003';
+import { parseTable, rowAddress } from './store-graph.js?v=2026111004';
 
 const today = new Date();
 const serial = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
@@ -142,12 +142,22 @@ export class DemoStore {
     const t = await this.loadTable(name);
     return { address: `${t.sheet}!${rowAddress(t, row._row)} (demo)` };
   }
-  async setCells(name, header, items) {
-    const i = HEAD[name].indexOf(header);
-    for (const { row, value } of items) this.data[name][row._i][i] = value;
+  // Same contract as GraphStore.setRows, including the "rows moved" check.
+  async setRows(name, items, onProgress) {
+    const computed = this.schema[name]?.computed || [];
+    const fresh = await this.loadTable(name);
+    for (const { row } of items) {
+      const live = fresh.rows[row._i];
+      const same = live && fresh.headers.every((h, i) => computed.includes(h) || String(live._raw[i]) === String(row._raw[i]));
+      if (!same) throw new Error(`Row ${row._row} of "${fresh.sheet}" changed in Excel since this list was loaded (rows may have been sorted, added or deleted). Nothing was written. Press ↻ and try again.`);
+    }
+    for (const { row, values } of items) for (const [h, v] of Object.entries(values)) this.data[name][row._i][HEAD[name].indexOf(h)] = v;
+    onProgress?.(items.length);
     await this.loadTable(name);
   }
-  setColumn(name, rowsToSet, header, value) { return this.setCells(name, header, rowsToSet.map(row => ({ row, value }))); }
+  setCells(name, header, items, onProgress) { return this.setRows(name, items.map(({ row, value }) => ({ row, values: { [header]: value } })), onProgress); }
+  setColumn(name, rowsToSet, header, value, onProgress) { return this.setRows(name, rowsToSet.map(row => ({ row, values: { [header]: value } })), onProgress); }
+  setColumns(name, rowsToSet, values, onProgress) { return this.setRows(name, rowsToSet.map(row => ({ row, values })), onProgress); }
   async addColumn(name, header) {
     if (HEAD[name].includes(header)) return;
     HEAD[name].push(header);

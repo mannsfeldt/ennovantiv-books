@@ -70,3 +70,28 @@ test('A-05: a delete that times out after Excel did it does not delete the next 
   await store.deleteRow('Tasks', store.tables.Tasks.rows[2]);          // "task 3"
   equal(fake.tables.Tasks.rows.map(r => r[col('Task')]), ['task 1', 'task 2', 'task 4', 'task 5', 'task 6', 'task 7', 'task 8']);
 }));
+
+const flags = (fake, name) => fake.tables.Tasks.rows.map(r => r[col(name)]);
+
+test('A-02: a bulk update is refused if a row was deleted in Excel meanwhile (rows shifted up)', withStore(async (store, fake) => {
+  const rows = store.tables.Tasks.rows.filter(r => r.Project === 'Beta');   // tasks 2, 4, 6, 8
+  fake.tables.Tasks.rows.splice(0, 1);                                      // someone deletes task 1
+  await rejects(() => store.setColumn('Tasks', rows, 'Invoiced', true), /changed in Excel/);
+  equal(flags(fake, 'Invoiced'), [false, false, false, false, false, false, false], 'nothing was ticked');
+}));
+
+test('A-02: a bulk update is refused if the table was sorted in Excel meanwhile', withStore(async (store, fake) => {
+  const rows = store.tables.Tasks.rows.slice(0, 3);
+  fake.tables.Tasks.rows.reverse();
+  await rejects(() => store.setColumn('Tasks', rows, 'Paid', true), /changed in Excel/);
+  assert(flags(fake, 'Paid').every(v => v === false), 'nothing was ticked');
+}));
+
+test('A-02: setColumns writes several columns on the same rows after one check', withStore(async (store, fake) => {
+  const rows = store.tables.Tasks.rows.filter(r => r.Project === 'Alpha');  // tasks 1, 3, 5, 7
+  await store.setColumns('Tasks', rows, { Invoice: 'AL2611', Invoiced: true });
+  equal(flags(fake, 'Invoiced'), [true, false, true, false, true, false, true, false]);
+  equal(flags(fake, 'Invoice'), ['AL2611', '', 'AL2611', '', 'AL2611', '', 'AL2611', '']);
+  const writes = fake.calls.filter(c => c.startsWith('PATCH'));
+  assert(writes[0].includes("'I"), 'the invoice number (column I) is written before the Invoiced tick, so an interrupted write never leaves "invoiced, no number"');
+}));
