@@ -282,3 +282,66 @@ test('A-07: deleting an invoiced time entry warns that it was billed', withApp('
   assert(/billed|invoice/i.test(app.confirms.join(' ')), `delete warning mentions the invoice; got: ${JSON.stringify(app.confirms)}`);
   equal(app.rows('Tasks').length, before, 'row kept');
 }));
+
+test('A-10: 75 hours in one time entry asks before saving', withApp('/time', async app => {
+  const before = app.rows('Tasks').length;
+  fillTime(app); app.set('Hours', '75');                    // meant 7.5
+  app.answer = false;
+  await app.save();
+  assert(app.confirms.some(c => /75/.test(c) && /hours/i.test(c)), `asked about 75 hours; confirms: ${JSON.stringify(app.confirms)}`);
+  equal(app.rows('Tasks').length, before, 'not saved when declined');
+}));
+
+test('A-10: zero hours asks before saving', withApp('/time', async app => {
+  const before = app.rows('Tasks').length;
+  fillTime(app); app.set('Hours', '0');
+  app.answer = false;
+  await app.save();
+  assert(app.confirms.length === 1, 'asked once');
+  equal(app.rows('Tasks').length, before);
+}));
+
+test('A-10: an ordinary time entry saves without any question', withApp('/time', async app => {
+  fillTime(app);
+  await app.save();
+  equal(app.confirms, []);
+}));
+
+test('A-10: Business use of 150% asks before saving an expense', withApp('/expenses', async app => {
+  const before = app.rows('Expenses').length;
+  app.set('Vendor', 'Staples'); app.set('Category', 'Office Expenses'); app.set('Amount', '20'); app.set('Business', '150');
+  app.answer = false;
+  await app.save();
+  assert(app.confirms.some(c => /150/.test(c)), `asked about 150%; confirms: ${JSON.stringify(app.confirms)}`);
+  equal(app.rows('Expenses').length, before);
+}));
+
+test('A-10: a billable project cannot be added without a rate', withApp('/projects', async app => {
+  const before = app.rows('Projects').length, f = app.$('#pform').elements;
+  f.Name.value = 'No Rate Job'; f.Client.value = CLIENT; f.Client.dispatchEvent(new app.win.Event('change'));
+  f.Type.value = 'Hourly'; f.Rate.value = '';
+  app.$('#pform').requestSubmit(); await app.idle();
+  equal(app.rows('Projects').length, before, 'project not added');
+  assert(/rate/i.test(app.toasts().join(' ')), 'says a rate is needed');
+}));
+
+test('A-10: a payment date before the invoice date asks first', withApp('/dashboard', async app => {
+  await addTracking(app);
+  const number = await record(app);
+  const inv = () => invoiceRows(app, number)[0];
+  app.$(`[data-paid="${inv()._row}"]`).click();
+  const dlg = await until(() => app.$('dialog.modal'), 6000, 'the Mark paid dialog');
+  dlg.querySelector('input[name=date]').value = '2020-01-01';
+  app.confirms.length = 0; app.answer = false;
+  dlg.querySelector('button[value=ok]').click(); await app.idle();
+  assert(app.confirms.some(c => /before/i.test(c)), `asked about the early date; confirms: ${JSON.stringify(app.confirms)}`);
+  assert(!inv().Paid, 'not marked paid when declined');
+}));
+
+test('A-10: the checklist flags an hourly project that has hours but no rate', withApp('/dashboard', async app => {
+  const i = app.rows('Projects').findIndex(p => p.Name === 'Substation Upgrade');
+  await app.poke('Projects', i, 'Rate', '');
+  const dlg = await openRecordDialog(app);
+  assert(/no rate/i.test(dlg.textContent) && /Substation Upgrade/.test(dlg.textContent), 'checklist names the project with no rate');
+  dlg.querySelector('button[value=cancel]').click();
+}));

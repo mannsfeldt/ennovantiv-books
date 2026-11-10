@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111007';
-import { DemoStore } from './store-demo.js?v=2026111007';
-import { compressImage, readReceipt } from './receipt.js?v=2026111007';
+import { GraphStore } from './store-graph.js?v=2026111008';
+import { DemoStore } from './store-demo.js?v=2026111008';
+import { compressImage, readReceipt } from './receipt.js?v=2026111008';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -338,6 +338,8 @@ const TIME = {
   ],
   summary: (shown) => `${hrs(shown.reduce((s, r) => s + num(r.Hours), 0))} h`,
   filterCol: 'Project',
+  // Values that are almost always typing mistakes: ask, don't block
+  check: v => v.Hours <= 0 ? [`Hours is ${v.Hours}.`] : v.Hours > 16 ? [`${v.Hours} hours in one entry is more than 16 (did you mean ${v.Hours / 10}?).`] : [],
   // An invoiced entry is part of an invoice that has gone out. Changing what was
   // billed (or deleting it) alters the billed history, so ask first.
   billedOn: r => r.Invoiced === true ? (clean(r[cfg().invoiceLinkColumn]) || 'an invoice') : '',
@@ -498,6 +500,10 @@ const EXPENSE = {
     $('#pick').onchange = e => onFile(e.target.files[0]);
     if (location.hash.endsWith('/scan') && !editing) setTimeout(() => $('#cam').click(), 150);
   },
+  check: v => [
+    v.Amount === 0 ? 'The amount is $0.' : '',
+    typeof v.Business === 'number' && (v.Business < 0 || v.Business > 1) ? `Business use is ${+(v.Business * 100).toFixed(4)}%; it should be between 0 and 100.` : '',
+  ].filter(Boolean),
   derive(v, editing) {
     const hst = v._hst, tax = v._tax;
     delete v._hst; delete v._tax;
@@ -691,6 +697,8 @@ function viewEntry(spec, view = $('#view'), editing = null) {
     }
     if (!editing) for (const fd of spec.fields) if (fd.editOnly) values[fd.col] = false;
     spec.derive?.(values, editing);
+    const odd = spec.check?.(values) || [];
+    if (odd.length && !confirm(`${odd.join('\n')}\n\nSave it anyway?`)) return;
     const guard = spec.guard?.(editing, values);
     if (guard && !confirm(guard)) return;
     // remember sticky values
@@ -947,6 +955,7 @@ async function markPaid(inv, after) {
   if (!data) return;
   const d = data.get('date');
   if (!/^\d{4}-\d\d-\d\d$/.test(d || '')) return toast('Please enter a payment date.', 'warn');
+  if (toSerial(d) < num(inv.Date) && !confirm(`${d} is before ${inv.Number} was issued (${toISO(inv.Date)}).\n\nRecord this payment date anyway?`)) return;
   await busy('Recording payment…', async () => {
     // Time and disbursements first, the invoice last: if anything fails the
     // invoice still shows unpaid, and Mark paid can be run again to finish.
@@ -1269,6 +1278,7 @@ function viewProjects(view, from) {
     if (projects.some(p => clean(p.Name).toLowerCase() === v('Name').toLowerCase())) return toast(`A project named “${esc(v('Name'))}” already exists. Project names must be unique; time and invoices look projects up by name.`, 'warn', 8000);
     if (projects.some(p => clean(p.ProjectID).toLowerCase() === v('ProjectID').toLowerCase()) && !confirm(`Project ID ${v('ProjectID')} is already used. Add anyway?`)) return;
     if (f.Type.value === 'Fixed Fee' && !num(f.Fee.value)) return toast('Enter the fixed fee for a Fixed Fee project.', 'warn');
+    if (f.Type.value !== 'Internal' && !(num(f.Rate.value) > 0)) return toast('Enter the hourly rate. Without one, this project’s time would be invoiced at $0.00.', 'warn', 8000);
     const row = {
       Name: v('Name'), ProjectID: v('ProjectID'), Client: v('Client'), ClientID: v('ClientID'),
       Status: f.Status.value, Type: f.Type.value, Prime: f.Prime.value,
@@ -1477,6 +1487,8 @@ async function preInvoiceCheck(client, dateISO, inv, action) {
   const stray = col ? plannedFor('Tasks', inv.number).filter(r => !included.has(r._row)) : [];
   const relabel = col ? inv.tasks.filter(r => clean(r[col]) && clean(r[col]) !== inv.number) : [];
   const warn = [];
+  const noRate = inv.hourly.filter(l => l.hours > 0 && !l.amount);
+  if (noRate.length) warn.push(`<b>${noRate.map(l => esc(l.name)).join(', ')} ${noRate.length === 1 ? 'has' : 'have'} hours but no rate</b>, so ${hrs(noRate.reduce((s, l) => s + l.hours, 0))} h would be invoiced at $0.00 and marked Invoiced. Set the rate in the Projects table first.`);
   if (stray.length) warn.push(`<b>${stray.length} ${stray.length === 1 ? 'entry is' : 'entries are'} labelled ${esc(inv.number)} but ${stray.length === 1 ? 'isn’t' : 'aren’t'} on this invoice</b> (${[...new Set(stray.map(r => esc(r.Project)))].join(', ')}): ${stray.length === 1 ? 'it is' : 'they are'} not billable or ${stray.length === 1 ? 'its' : 'their'} project has nothing to bill.${action === 'record' ? `<label class="check"><input type="checkbox" name="clear" checked> Clear the ${esc(inv.number)} label from ${stray.length === 1 ? 'it' : 'them'} when recording</label>` : ''}`);
   if (relabel.length) warn.push(`${relabel.length} included ${relabel.length === 1 ? 'entry is' : 'entries are'} labelled with a different number (${[...new Set(relabel.map(r => esc(clean(r[col]))))].join(', ')}); recording will change ${relabel.length === 1 ? 'it' : 'them'} to ${esc(inv.number)}.`);
   if (unlinked.length) warn.push(`<b>${unlinked.length} ${esc(client)} time ${unlinked.length === 1 ? 'entry is' : 'entries are'} marked Invoiced but ${unlinked.length === 1 ? 'has' : 'have'} no invoice number</b>, probably ticked by hand in the spreadsheet. ${unlinked.length === 1 ? 'It isn’t' : 'They aren’t'} on this invoice. <a href="#/invoices" data-close>Review them under Invoice check</a>.`);
