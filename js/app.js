@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111004';
-import { DemoStore } from './store-demo.js?v=2026111004';
-import { compressImage, readReceipt } from './receipt.js?v=2026111004';
+import { GraphStore } from './store-graph.js?v=2026111005';
+import { DemoStore } from './store-demo.js?v=2026111005';
+import { compressImage, readReceipt } from './receipt.js?v=2026111005';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -102,6 +102,8 @@ async function connect() {
   $('#filechip').innerHTML = `<span class="dot"></span>${esc(store.file.name)}`;
   $('#filechip').href = store.file.webUrl;
   route();
+  const j = ls.get('pendingInvoice', null);
+  if (j) toast(`<b>${esc(j.number)} is only partly recorded.</b> Open <a href="#/invoices">Invoices</a> and press Resume.`, 'warn', 15000);
 }
 
 async function refresh() {
@@ -839,6 +841,7 @@ function viewInvoices(view, sub) {
 
   view.innerHTML = `
     <div class="page-head"><h1>Invoices</h1></div>
+    ${pendingInvoiceCard()}
     <div class="card" id="newinv">
       <h2>Create an invoice</h2>
       <div class="row-inline">
@@ -866,6 +869,15 @@ function viewInvoices(view, sub) {
   $$('[data-paid]', view).forEach(b => b.onclick = (e) => { e.stopPropagation(); markPaid(rows('Invoices').find(x => x._row === Number(b.dataset.paid)), () => viewInvoices(view)); });
   $$('tr[data-inv]', view).forEach(tr => tr.onclick = () => { location.hash = '#/invoice/' + encodeURIComponent(tr.dataset.inv); });
   wireInvoiceCheck(view);
+  if ($('#resume', view)) {
+    $('#resume', view).onclick = () => runPendingInvoice(view);
+    $('#discard', view).onclick = () => {
+      const j = ls.get(PENDING, null);
+      if (!confirm(`Stop tracking the interrupted ${j.number}?\n\nWhatever was already written stays in the workbook. You would need to finish it by hand: check the Invoices sheet and the Invoiced column on the Time sheet.`)) return;
+      ls.set(PENDING, null);
+      viewInvoices(view);
+    };
+  }
 
   const draw = () => {
     const client = $('#ic').value, date = $('#idate').value || bd.iso;
@@ -921,13 +933,15 @@ async function markPaid(inv, after) {
   const d = data.get('date');
   if (!/^\d{4}-\d\d-\d\d$/.test(d || '')) return toast('Please enter a payment date.', 'warn');
   await busy('Recording payment…', async () => {
-    const res = await store.updateRow('Invoices', inv, { Paid: toSerial(d) });
-    logActivity('Invoice paid', res.address, `${inv.Number} · ${d}`);
+    // Time and disbursements first, the invoice last: if anything fails the
+    // invoice still shows unpaid, and Mark paid can be run again to finish.
     if (data.get('cascade')) {
       if (n) await store.setColumn('Tasks', tasks.list, 'Paid', true, k => { $('#busy span').textContent = `Marking time entries paid… ${k}/${n}`; });
       if (m) await store.setColumn('Disbursements', disb.list, 'Paid', true);
       logActivity('Marked paid', `Tasks ×${n}, Disbursements ×${m}`, inv.Number);
     }
+    const res = await store.updateRow('Invoices', inv, { Paid: toSerial(d) });
+    logActivity('Invoice paid', res.address, `${inv.Number} · ${d}`);
     toast(`${esc(inv.Number)} marked paid in <code>${esc(res.address)}</code>${data.get('cascade') && (n || m) ? ` · ${n} time entries${m ? ` and ${m} disbursements` : ''} marked paid` : ''}`, 'ok', 7000);
   });
   after();
@@ -942,38 +956,112 @@ function printDoc(html, title) {
 }
 const printInvoice = inv => printDoc(invoiceHTML(inv), `Invoice ${inv.number}`);
 
+// ---- recording an invoice ----
+// Recording is several writes (the Invoices row, then ticks and numbers on
+// time and disbursements). A journal kept on this device remembers what a
+// recording set out to do, so one that is interrupted can be finished with
+// Resume. Otherwise the unticked time would be billed again next month, and a
+// second attempt would add a second Invoices row.
+const PENDING = 'pendingInvoice';
+const taskSig = r => [num(r.Date), clean(r.Project), num(r.Hours), clean(r.Task), clean(r.Worker)].join('|');
+const disbSig = r => [num(r.Date), clean(r.Client), clean(r.Project), clean(r.Description), num(r.Cost)].join('|');
+// What the journal stores per table: how many rows of each content to mark,
+// and how many identical rows were already invoiced before it started.
+function journalRows(table, sigOf, wanted) {
+  const need = {}, already = {};
+  for (const r of wanted) need[sigOf(r)] = (need[sigOf(r)] || 0) + 1;
+  for (const sig of Object.keys(need)) already[sig] = rows(table).filter(r => sigOf(r) === sig && r.Invoiced === true).length;
+  return { need, already };
+}
+// Rows the journal still has to mark, found by content because row numbers can
+// move. Rows already ticked for it are skipped, so Resume never repeats work.
+function pendingRows(table, sigOf, { need, already }) {
+  const out = { rows: [], missing: 0 };
+  for (const [sig, n] of Object.entries(need)) {
+    const same = rows(table).filter(r => sigOf(r) === sig);
+    const done = Math.max(0, same.filter(r => r.Invoiced === true).length - (already[sig] || 0));
+    const open = same.filter(r => r.Invoiced !== true && (table !== 'Tasks' || r.Billable === true)).slice(0, Math.max(0, n - done));
+    out.rows.push(...open);
+    out.missing += Math.max(0, n - done - open.length);
+  }
+  return out;
+}
+
+// Does whatever is still missing for the journalled invoice; safe to run again.
+async function finishInvoice(j) {
+  const tables = ['Projects', 'Tasks', 'Disbursements', 'Invoices'];
+  await store.loadAll(tables);
+  let address = '';
+  if (!j.added && rows('Invoices').filter(i => clean(i.Number) === j.number).length <= j.invoicesBefore) {
+    const res = await store.addRow('Invoices', { Date: toSerial(j.date), Client: j.client, Number: j.number, Amount: j.total });
+    address = res.address;
+    logActivity('Recorded invoice', res.address, `${j.number} · ${money(j.total)}`);
+  }
+  j.added = true;
+  ls.set(PENDING, j);
+  let missing = 0;
+  if (j.mark) {
+    // The invoice number (when the table has the column) lets "Mark paid" find
+    // exactly these rows later. It is written before the Invoiced tick, so an
+    // interrupted write leaves rows "planned", never invoiced without a number.
+    const tl = linkCol('Tasks'), dl = linkCol('Disbursements');
+    const tasks = pendingRows('Tasks', taskSig, j.tasks), disb = pendingRows('Disbursements', disbSig, j.disb);
+    const progress = n => { $('#busy span').textContent = `Marking time entries… ${n}/${tasks.rows.length}`; };
+    if (tasks.rows.length) await store.setColumns('Tasks', tasks.rows, { ...(tl ? { [tl]: j.number } : {}), Invoiced: true }, progress);
+    if (disb.rows.length) await store.setColumns('Disbursements', disb.rows, { ...(dl ? { [dl]: j.number } : {}), Invoiced: true });
+    // Labels typed ahead for this invoice on rows it didn't include: once the
+    // included rows are ticked, whatever is still only labelled is one of those.
+    const stray = tl && j.clearStray ? plannedFor('Tasks', j.number) : [];
+    if (stray.length) await store.setColumn('Tasks', stray, tl, '');
+    missing = tasks.missing + disb.missing;
+    logActivity('Marked invoiced', `Tasks ×${tasks.rows.length}, Disbursements ×${disb.rows.length}`, j.number);
+  }
+  ls.set(PENDING, null);
+  await store.loadAll(tables);
+  return { address, missing };
+}
+
+async function runPendingInvoice(view) {
+  const j = ls.get(PENDING, null);
+  if (!j) return;
+  try {
+    await busy(`Recording ${j.number}…`, async () => {
+      const r = await finishInvoice(j);
+      toast(`Invoice ${esc(j.number)} recorded${r.address ? ` in <code>${esc(r.address)}</code>` : ''}.`, 'ok', 8000);
+      if (r.missing) toast(`⚠ ${r.missing} ${r.missing === 1 ? 'entry' : 'entries'} that ${esc(j.number)} set out to mark could not be found any more (changed or deleted meanwhile). Check the Time sheet.`, 'warn', 15000);
+    });
+  } catch {
+    toast(`<b>${esc(j.number)} is only partly recorded.</b> Nothing is lost: press <b>Resume</b> on the Invoices page to finish it.`, 'warn', 15000);
+  }
+  viewInvoices(view);
+}
+
+function pendingInvoiceCard() {
+  const j = ls.get(PENDING, null);
+  if (!j) return '';
+  return `<div class="card pending">
+    <h2>${esc(j.number)} is only partly recorded</h2>
+    <p class="small">Recording ${esc(j.number)} (${money(j.total)}) for ${esc(j.client)} was interrupted on ${new Date(j.when).toLocaleString('en-CA')}. Until it is finished, some of its time may not be marked Invoiced and would appear on the next invoice as well.</p>
+    <div class="actions"><button class="btn primary" id="resume">Resume</button><button class="btn" id="discard">Discard…</button></div>
+  </div>`;
+}
+
 async function recordInvoice(client, date, view) {
+  if (ls.get(PENDING, null)) return toast('Finish or discard the interrupted invoice at the top of this page first.', 'warn');
   // Re-read the source tables so we record exactly what Excel has now
   await busy('Checking the workbook…', () => store.loadAll(['Projects', 'Tasks', 'Disbursements', 'Invoices']));
   const inv = computeInvoice(client, date);
   const mark = $('#markinv')?.checked;
+  const existing = rows('Invoices').filter(i => clean(i.Number) === inv.number).length;
+  if (existing && !confirm(`Invoice ${inv.number} is already in the Invoices table.\n\nRecording again adds a second row with the same number, which counts it twice in receivables. Record another ${inv.number} anyway?`)) return;
   const chk = await preInvoiceCheck(client, date, inv, 'record');
   if (!chk) return;
-  await busy('Recording invoice…', async () => {
-    const res = await store.addRow('Invoices', { Date: toSerial(date), Client: client, Number: inv.number, Amount: inv.total });
-    logActivity('Recorded invoice', res.address, `${inv.number} · ${money(inv.total)}`);
-    if (mark) {
-      const disbRows = inv.disb.map(d => d.row);
-      const progress = n => { $('#busy span').textContent = `Marking time entries… ${n}/${inv.tasks.length}`; };
-      // The invoice number (when the table has the column) lets "Mark paid" find
-      // exactly these rows later. It is written before the Invoiced tick, so an
-      // interrupted write leaves rows "planned", never invoiced without a number.
-      const tl = linkCol('Tasks'), dl = linkCol('Disbursements');
-      if (inv.tasks.length) await store.setColumns('Tasks', inv.tasks, { ...(tl ? { [tl]: inv.number } : {}), Invoiced: true }, progress);
-      if (disbRows.length) await store.setColumns('Disbursements', disbRows, { ...(dl ? { [dl]: inv.number } : {}), Invoiced: true });
-      // Labels typed ahead for this invoice on rows it didn't include
-      if (tl && chk.clearStray && chk.stray.length) await store.setColumn('Tasks', chk.stray, tl, '');
-      logActivity('Marked invoiced', `Tasks ×${inv.tasks.length}, Disbursements ×${inv.disb.length}`, inv.number);
-    }
-    await store.loadAll(['Projects', 'Tasks', 'Disbursements', 'Invoices']);
-    toast(`Invoice ${esc(inv.number)} recorded in <code>${esc(res.address)}</code>`, 'ok', 8000);
-    // Double-check every included entry now carries the number
-    if (mark && linkCol('Tasks')) {
-      const stamped = stampedWith('Tasks', inv.number).length;
-      if (stamped !== inv.tasks.length) toast(`⚠ Only ${stamped} of ${inv.tasks.length} time entries show invoice number ${esc(inv.number)}. Check the Invoice column in the Tasks table.`, 'warn', 12000);
-    }
+  ls.set(PENDING, {
+    number: inv.number, client, date, total: inv.total, mark: !!mark, clearStray: chk.clearStray, when: new Date().toISOString(),
+    invoicesBefore: existing, added: false,
+    tasks: journalRows('Tasks', taskSig, inv.tasks), disb: journalRows('Disbursements', disbSig, inv.disb.map(d => d.row)),
   });
-  viewInvoices(view);
+  await runPendingInvoice(view);
 }
 
 // =====================================================================

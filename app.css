@@ -265,3 +265,4 @@ dialog.modal .scroll table.list td { vertical-align: middle; }
 .nextbill svg { width: 20px; height: 20px; color: var(--blue); flex: none; }
 #invcheck select { min-height: 34px; padding: .25rem .4rem; font-size: 14px; width: auto; }
 a.pill { text-decoration: none; }
+.card.pending { border-color: #F0A830; border-left: 4px solid #F0A830; background: var(--warn-bg); }

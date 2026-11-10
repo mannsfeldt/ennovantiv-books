@@ -131,3 +131,84 @@ test('app: recording an invoice adds one Invoices row and ticks and numbers its 
   equal(clientTasks(app).filter(r => r.Invoiced === true && r.Invoice === number).length, due, 'entries ticked and numbered');
   equal(clientTasks(app).filter(r => r.Invoiced !== true).length, 0, 'entries left unbilled');
 }));
+
+// make the next bulk write fail, optionally after writing the first `partial` rows
+function failNextBulkWrite(app, partial = 0) {
+  const real = app.store.setRows.bind(app.store);
+  let armed = true;
+  app.store.setRows = async (name, items, onProgress) => {
+    if (!armed) return real(name, items, onProgress);
+    armed = false;
+    if (partial) await real(name, items.slice(0, partial));
+    throw new Error('Failed to fetch');
+  };
+}
+const pending = () => JSON.parse(localStorage.getItem('books:pendingInvoice') || 'null');
+
+test('A-03: an interrupted recording can be resumed, and ends complete with one Invoices row', withApp('/dashboard', async app => {
+  await addTracking(app);
+  const due = clientTasks(app).filter(r => r.Invoiced !== true).length;
+  failNextBulkWrite(app);                                   // connection drops after the Invoices row is added
+  const number = await record(app);
+  equal(invoiceRows(app, number).length, 1, 'Invoices row was added');
+  equal(clientTasks(app).filter(r => r.Invoiced === true && r.Invoice === number).length, 0, 'no time ticked yet');
+  assert(pending()?.number === number, 'the interrupted invoice is remembered');
+  const resume = await until(() => app.$('#resume'), 3000, 'a Resume button on the Invoices page');
+  resume.click(); await app.idle();
+  equal(invoiceRows(app, number).length, 1, 'still exactly one Invoices row');
+  equal(clientTasks(app).filter(r => r.Invoiced === true && r.Invoice === number).length, due, 'all entries ticked and numbered');
+  equal(pending(), null, 'nothing left pending');
+  assert(!app.$('#resume'), 'Resume button gone');
+}));
+
+test('A-03: resuming after some entries were already ticked only does the rest', withApp('/dashboard', async app => {
+  await addTracking(app);
+  const due = clientTasks(app).filter(r => r.Invoiced !== true).length;
+  failNextBulkWrite(app, 1);                                // one entry ticked, then the connection drops
+  const number = await record(app);
+  equal(clientTasks(app).filter(r => r.Invoiced === true).length - clientTasks(app).filter(r => r.Invoiced === true && r.Invoice !== number).length, 1, 'one entry ticked before the failure');
+  (await until(() => app.$('#resume'), 3000, 'a Resume button')).click(); await app.idle();
+  equal(clientTasks(app).filter(r => r.Invoiced === true && r.Invoice === number).length, due, 'all entries ticked and numbered');
+  equal(invoiceRows(app, number).length, 1, 'exactly one Invoices row');
+}));
+
+test('A-03: recording an invoice number that already exists asks first', withApp('/dashboard', async app => {
+  await addTracking(app);
+  const number = await record(app);
+  await app.store.addRow('Tasks', { Date: app.rows('Tasks').at(-1).Date, Project: 'Substation Upgrade', Hours: 1, Task: 'late entry', Worker: 'Demo User', Billable: true, Invoiced: false, Paid: false });
+  await app.store.loadTable('Projects');                    // the demo recalculates project totals on load
+  equal(await previewInvoice(app), number, 'same month, same number');
+  app.confirms.length = 0; app.answer = false;              // decline
+  app.$('#rec').click(); await app.idle(); await sleep(100);
+  assert(app.confirms.some(c => /already/i.test(c)), `asked before recording a second ${number}; confirms: ${JSON.stringify(app.confirms)}`);
+  app.$('dialog.modal')?.querySelector('button[value=cancel]')?.click();
+  equal(invoiceRows(app, number).length, 1, 'no second Invoices row');
+}));
+
+test('A-03: if marking time paid fails, the invoice stays unpaid so Mark paid can be retried', withApp('/dashboard', async app => {
+  await addTracking(app);
+  const number = await record(app);
+  const inv = () => invoiceRows(app, number)[0];
+  const paidTasks = () => clientTasks(app).filter(r => r.Invoice === number && r.Paid === true).length;
+  const total = clientTasks(app).filter(r => r.Invoice === number).length;
+  failNextBulkWrite(app);
+  app.$(`[data-paid="${inv()._row}"]`).click(); await confirmDialog(app);
+  assert(!inv().Paid, 'invoice is not marked paid when its time entries could not be');
+  equal(paidTasks(), 0);
+  app.$(`[data-paid="${inv()._row}"]`).click(); await confirmDialog(app);     // retry
+  assert(inv().Paid, 'invoice paid after the retry');
+  equal(paidTasks(), total, 'all its time entries paid');
+}));
+
+test('A-03: two identical time entries are both ticked after a resumed recording', withApp('/dashboard', async app => {
+  await addTracking(app);
+  const twin = { Date: app.rows('Tasks').at(-1).Date, Project: 'Substation Upgrade', Hours: 2, Task: 'site visit', Worker: 'Demo User', Billable: true, Invoiced: false, Paid: false };
+  await app.store.addRow('Tasks', twin); await app.store.addRow('Tasks', twin);
+  await app.store.loadTable('Projects');
+  const due = clientTasks(app).filter(r => r.Invoiced !== true).length;
+  failNextBulkWrite(app, 1);
+  const number = await record(app);
+  (await until(() => app.$('#resume'), 3000, 'a Resume button')).click(); await app.idle();
+  equal(clientTasks(app).filter(r => r.Invoiced === true && r.Invoice === number).length, due, 'every entry ticked, including both twins');
+  equal(clientTasks(app).filter(r => r.Task === 'site visit' && r.Invoice === number).length, 2, 'both identical entries carry the number');
+}));
