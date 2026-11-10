@@ -28,6 +28,9 @@ export async function openApp(hash = '/dashboard') {
     async save() { doc.querySelector('#entry').requestSubmit(); await app.idle(); },
     async idle() { await sleep(30); await until(() => doc.querySelector('#busy')?.hidden !== false, 8000, 'the app to finish saving'); await sleep(30); },
     async edit(table, row) { doc.querySelector(`#listwrap tr[data-row="${row._row}"]`).click(); await sleep(40); },
+    async showAll() { const p = doc.querySelector('#period'); p.value = 'year'; p.dispatchEvent(new win.Event('change')); await sleep(30); },
+    // change a cell in the demo workbook directly, as if it had been edited in Excel
+    async poke(table, rowIndex, column, value) { store.data[table][rowIndex][store.tables[table].headers.indexOf(column)] = value; await store.loadTable(table); },
     toasts: () => [...doc.querySelectorAll('.toast')].map(t => t.textContent),
     close() { frame.remove(); },
   };
@@ -47,4 +50,15 @@ test('app: logging time adds one row to the Tasks table', withApp('/time', async
   equal(app.rows('Tasks').length, before + 1, 'row count');
   const row = app.rows('Tasks').at(-1);
   equal([row.Project, row.Hours, row.Task, row.Billable, row.Invoiced], ['Substation Upgrade', 2.5, 'Cable sizing', true, false]);
+}));
+
+test('A-01: editing an expense keeps a fractional Business % (25.8%)', withApp('/time', async app => {
+  await app.poke('Expenses', 0, 'Business', 0.258);         // a home-office expense
+  await app.go('/expenses'); await app.showAll();
+  await app.edit('Expenses', app.rows('Expenses')[0]);
+  equal(app.form().elements.Business.value, '25.8', 'form shows the exact percentage');
+  app.set('Description', 'typo fixed');
+  await app.save();
+  const row = app.rows('Expenses')[0];
+  equal([row.Description, row.Business], ['typo fixed', 0.258], 'Business is unchanged after an unrelated edit');
 }));

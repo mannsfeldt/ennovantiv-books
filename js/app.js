@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026101502';
-import { DemoStore } from './store-demo.js?v=2026101502';
-import { compressImage, readReceipt } from './receipt.js?v=2026101502';
+import { GraphStore } from './store-graph.js?v=2026111001';
+import { DemoStore } from './store-demo.js?v=2026111001';
+import { compressImage, readReceipt } from './receipt.js?v=2026111001';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -555,7 +555,7 @@ function fieldHTML(fd, editing) {
     input = `<select id="${id}" name="${esc(fd.col)}" ${req}>${fd.required ? '<option value="">Choose…</option>' : ''}${opts.map(o =>
       typeof o === 'object' ? `<optgroup label="${esc(o.group)}">${o.items.map(opt).join('')}</optgroup>` : opt(o)).join('')}</select>`;
   } else if (fd.type === 'percent') {
-    input = `<div class="suffix"><input id="${id}" name="${esc(fd.col)}" type="number" min="0" max="100" step="1" inputmode="numeric"><span>%</span></div>`;
+    input = `<div class="suffix"><input id="${id}" name="${esc(fd.col)}" type="number" min="0" max="100" step="any" inputmode="decimal"><span>%</span></div>`;
   } else {
     const list = fd.list ? `list="dl-${esc(fd.col)}"` : '';
     const mode = fd.type === 'number' ? `inputmode="decimal" step="${fd.step || 'any'}" ${fd.min ? `min="${fd.min}"` : ''}` : '';
@@ -611,7 +611,7 @@ function viewEntry(spec, view = $('#view'), editing = null) {
     let v = editing ? (fd.load ? fd.load(editing) : editing[fd.col]) : (fd.sticky && fd.col in sticky ? sticky[fd.col] : fd.def?.());
     if (fd.type === 'check') el.checked = v === true;
     else if (fd.type === 'date') el.value = editing ? toISO(v) : (v || '');
-    else if (fd.type === 'percent') el.value = v === '' || v == null ? '' : Math.round(num(v) * 100);
+    else if (fd.type === 'percent') { el.value = v === '' || v == null ? '' : +(num(v) * 100).toFixed(6); el.dataset.loaded = el.value; } // exact, e.g. 25.8
     else el.value = v ?? '';
     if (fd.type === 'select' && editing && v && el.value !== String(v)) {
       el.insertAdjacentHTML('beforeend', `<option value="${esc(v)}">${esc(v)}</option>`); el.value = v;
@@ -673,7 +673,8 @@ function viewEntry(spec, view = $('#view'), editing = null) {
       if (fd.type === 'check') values[fd.col] = el.checked;
       else if (fd.type === 'date') values[fd.col] = toSerial(el.value);
       else if (fd.type === 'number') values[fd.col] = el.value === '' ? '' : Number(el.value);
-      else if (fd.type === 'percent') values[fd.col] = el.value === '' ? 1 : Number(el.value) / 100;
+      else if (fd.type === 'percent') values[fd.col] = editing && el.value === el.dataset.loaded ? editing[fd.col] // untouched: keep the cell exactly as it is
+        : el.value === '' ? 1 : Number(el.value) / 100;
       else values[fd.col] = clean(el.value);
     }
     if (!editing) for (const fd of spec.fields) if (fd.editOnly) values[fd.col] = false;
