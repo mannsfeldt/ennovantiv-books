@@ -62,3 +62,25 @@ test('A-01: editing an expense keeps a fractional Business % (25.8%)', withApp('
   const row = app.rows('Expenses')[0];
   equal([row.Description, row.Business], ['typo fixed', 0.258], 'Business is unchanged after an unrelated edit');
 }));
+
+const fillTime = app => { app.set('Project', 'Substation Upgrade'); app.set('Hours', '1.5'); app.set('Task', 'Site call'); };
+
+test('A-04: submitting the form twice saves the entry once', withApp('/time', async app => {
+  const before = app.rows('Tasks').length;
+  fillTime(app);
+  app.form().requestSubmit(); app.form().requestSubmit();     // Enter pressed twice
+  await app.idle();
+  equal(app.store.data.Tasks.length, before + 1, 'rows in the workbook');
+}));
+
+test('A-04: when the row is saved but cannot be re-read, the app says saved, not failed', withApp('/time', async app => {
+  const before = app.store.data.Tasks.length, load = app.store.loadTable.bind(app.store);
+  let failed = false;
+  app.store.loadTable = async name => { if (name === 'Tasks' && !failed) { failed = true; throw new Error('Failed to fetch'); } return load(name); };
+  fillTime(app);
+  await app.save();
+  equal(app.store.data.Tasks.length, before + 1, 'rows in the workbook');
+  const said = app.toasts().join(' | ');
+  assert(/Saved/.test(said) && /again/i.test(said), `toast should say it was saved and not to save again; got: ${said}`);
+  assert(!/⚠ Failed to fetch/.test(said), 'no bare failure message');
+}));

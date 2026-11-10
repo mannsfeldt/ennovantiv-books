@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111001';
-import { DemoStore } from './store-demo.js?v=2026111001';
-import { compressImage, readReceipt } from './receipt.js?v=2026111001';
+import { GraphStore } from './store-graph.js?v=2026111002';
+import { DemoStore } from './store-demo.js?v=2026111002';
+import { compressImage, readReceipt } from './receipt.js?v=2026111002';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -664,6 +664,7 @@ function viewEntry(spec, view = $('#view'), editing = null) {
 
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (form.dataset.saving) return;   // a save is already under way: ignore a second Enter or tap
     const missing = fields.filter(fd => fd.required && !clean(form.elements[fd.col].value));
     if (form.elements._hst && !form.elements._hst.checked && form.elements._tax.value === '') form.elements._tax.value = 0;
     if (missing.length) { toast('Please fill in: ' + missing.map(m => m.label || m.col).join(', '), 'warn'); form.elements[missing[0].col].focus(); return; }
@@ -684,12 +685,17 @@ function viewEntry(spec, view = $('#view'), editing = null) {
     fields.filter(f => f.sticky).forEach(f => st[f.col] = values[f.col]);
     ls.set('sticky:' + spec.key, st);
 
-    await busy(editing ? 'Saving changes…' : 'Saving to Excel…', async () => {
-      const extra = spec.beforeSave ? await spec.beforeSave(values) : '';
-      const res = editing ? await store.updateRow(spec.table, editing, values) : await store.addRow(spec.table, values);
-      logActivity(editing ? `Updated ${spec.noun}` : `Added ${spec.noun}`, res.address, summaryLine(spec, values));
-      toast(`${editing ? 'Updated' : 'Added'} <code>${esc(res.address)}</code>${extra}`, 'ok', 7000);
-    });
+    form.dataset.saving = '1';
+    try {
+      await busy(editing ? 'Saving changes…' : 'Saving to Excel…', async () => {
+        const extra = spec.beforeSave ? await spec.beforeSave(values) : '';
+        const res = editing ? await store.updateRow(spec.table, editing, values) : await store.addRow(spec.table, values);
+        logActivity(editing ? `Updated ${spec.noun}` : `Added ${spec.noun}`, res.address, summaryLine(spec, values));
+        toast(res.unverified
+          ? `Saved to <code>${esc(res.address)}</code>${extra}, but the table couldn't be re-read (${esc(res.unverified)}). <b>Don't save it again.</b> Press ↻ to see it.`
+          : `${editing ? 'Updated' : 'Added'} <code>${esc(res.address)}</code>${extra}`, res.unverified ? 'warn' : 'ok', res.unverified ? 15000 : 7000);
+      });
+    } finally { delete form.dataset.saving; }
     viewEntry(spec, view);
   };
 }
@@ -1152,6 +1158,7 @@ function viewProjects(view, from) {
 
   $('#pform').onsubmit = async (e) => {
     e.preventDefault();
+    if ($('#pform').dataset.saving) return;
     const v = name => clean(f[name].value);
     const missing = ['Name', 'Client', 'ProjectID'].filter(n => !v(n));
     if (missing.length) return toast('Please fill in: ' + missing.join(', '), 'warn');
@@ -1166,16 +1173,18 @@ function viewProjects(view, from) {
       Notes: v('Notes'),
     };
     let added = false;
+    $('#pform').dataset.saving = '1';
     await busy('Adding project…', async () => {
       const res = await store.addRow('Projects', row);
       logActivity('Added project', res.address, `${row.ProjectID} · ${row.Name}`);
+      if (res.unverified) return toast(`Saved <b>${esc(row.Name)}</b> to <code>${esc(res.address)}</code>, but the Projects table couldn't be re-read (${esc(res.unverified)}). <b>Don't add it again.</b> Press ↻ to see it.`, 'warn', 15000);
       // Read the table back and make sure the project is really there
       await store.loadTable('Projects');
       added = rows('Projects').some(p => clean(p.Name) === row.Name);
       const listed = [...cfg().activeStatuses, ...(cfg().opportunityStatuses || [])].includes(row.Status);
       if (!added) toast(`⚠ Excel accepted the row (<code>${esc(res.address)}</code>) but the project didn't come back when the Projects table was re-read. Press ↻ to refresh, and check the Projects table in Excel.`, 'warn', 15000);
       else toast(`Added <b>${esc(row.Name)}</b> in <code>${esc(res.address)}</code>. ${listed ? 'It’s now in the Time project list.' : `Projects with status ${esc(row.Status)} aren’t offered for new time.`}`, 'ok', 8000);
-    });
+    }).finally(() => { delete $('#pform')?.dataset.saving; });
     if (added && from === 'time') { ls.set('pickProject', row.Name); location.hash = '#/time'; return; }
     viewProjects(view);
     if (added) {

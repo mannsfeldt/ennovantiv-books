@@ -30,3 +30,14 @@ test('store: updateRow refuses when the row changed in Excel', withStore(async (
   await rejects(() => store.updateRow('Tasks', row, { Task: 'x' }), /changed in Excel/);
   equal(fake.tables.Tasks.rows[2][col('Task')], 'task 3', 'row left untouched');
 }));
+
+const afterAdd = fake => fake.calls.some(c => c.includes('rows/add'));
+
+test('A-04: a failed re-read after adding a row is not reported as a failed save', withStore(async (store, fake) => {
+  // the add reaches Excel, then the connection drops while re-reading the table
+  fake.failNext({ when: (m, p) => m === 'GET' && p.includes("tables('Tasks')/range") && afterAdd(fake), network: true });
+  const res = await store.addRow('Tasks', entry);        // must not throw: the row is in the workbook
+  equal(fake.tables.Tasks.rows.length, 9, 'row count');
+  equal(res.address, 'Time!A10:I10');
+  assert(res.unverified, 'result says the table could not be re-read');
+}));

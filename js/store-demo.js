@@ -1,6 +1,6 @@
 // In-memory store with made-up sample data, same interface as GraphStore.
 // Lets you try the app (?demo) without Microsoft sign-in. Nothing is saved.
-import { parseTable, rowAddress } from './store-graph.js?v=2026111001';
+import { parseTable, rowAddress } from './store-graph.js?v=2026111002';
 
 const today = new Date();
 const serial = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
@@ -126,9 +126,10 @@ export class DemoStore {
 
   async addRow(name, obj) {
     this.data[name].push(HEAD[name].map(h => (h in obj && obj[h] !== null ? obj[h] : '')));
-    const t = await this.loadTable(name);
-    const row = t.rows[t.rows.length - 1];
-    return { sheet: t.sheet, row: row._row, address: `${t.sheet}!${rowAddress(t, row._row)} (demo)` };
+    const old = this.tables[name], rowNum = this.data[name].length + 1;   // same contract as GraphStore.addRow
+    const out = { sheet: old.sheet, row: rowNum, address: `${old.sheet}!${rowAddress(old, rowNum)} (demo)` };
+    try { await this.loadTable(name); } catch (e) { out.unverified = e.message || String(e); }
+    return out;
   }
   async updateRow(name, row, changes) {
     const r = this.data[name][row._i];

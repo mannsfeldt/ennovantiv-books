@@ -172,10 +172,16 @@ export class GraphStore {
     let t = this.tables[tableName] || await this.loadTable(tableName);
     const values = t.headers.map(h => (h in obj ? obj[h] : null));
     const res = await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/rows/add`, { index: null, values: [values] });
-    t = await this.loadTable(tableName);
-    const row = t.rows[res.index];
-    await this.repairComputed(tableName, row, Object.keys(obj));
-    return { sheet: t.sheet, row: row._row, address: `${t.sheet}!${rowAddress(t, row._row)}` };
+    // From here on the row is in the workbook. A problem re-reading it must not
+    // be reported as a failed save: the natural reaction is to save again, which
+    // would add the row twice. Report it as saved-but-unverified instead.
+    const rowNum = t.startRow + 1 + res.index;
+    const out = { sheet: t.sheet, row: rowNum, address: `${t.sheet}!${rowAddress(t, rowNum)}` };
+    try {
+      t = await this.loadTable(tableName);
+      await this.repairComputed(tableName, t.rows[res.index], Object.keys(obj));
+    } catch (e) { out.unverified = e.message || String(e); }
+    return out;
   }
 
   // If Excel didn't auto-fill a calculated column for a new row, copy the
