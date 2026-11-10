@@ -212,3 +212,38 @@ test('A-03: two identical time entries are both ticked after a resumed recording
   equal(clientTasks(app).filter(r => r.Invoiced === true && r.Invoice === number).length, due, 'every entry ticked, including both twins');
   equal(clientTasks(app).filter(r => r.Task === 'site visit' && r.Invoice === number).length, 2, 'both identical entries carry the number');
 }));
+
+async function printInvoice(app) {
+  const number = await previewInvoice(app);
+  app.$('#print').click();
+  await confirmDialog(app);
+  return number;
+}
+async function openRecordDialog(app) {
+  await previewInvoice(app);
+  app.$('#rec').click();
+  return until(() => app.$('dialog.modal'), 6000, 'the record checklist');
+}
+
+test('A-06: recording warns, and needs an extra tick, when the invoice changed since it was printed', withApp('/dashboard', async app => {
+  await addTracking(app);
+  await printInvoice(app);
+  equal(app.printed, 1, 'printed once');
+  // a billable entry is added after the PDF went to the client
+  await app.store.addRow('Tasks', { Date: app.rows('Tasks').at(-1).Date, Project: 'Substation Upgrade', Hours: 3, Task: 'added after printing', Worker: 'Demo User', Billable: true, Invoiced: false, Paid: false });
+  await app.store.loadTable('Projects');
+  const dlg = await openRecordDialog(app);
+  assert(/not the invoice you printed/i.test(dlg.textContent), 'the checklist says the invoice changed since printing');
+  assert(/1 (time )?entr(y|ies) added/i.test(dlg.textContent), 'it says what changed');
+  assert(dlg.querySelector('input[name=changed][required]'), 'recording the new amount needs its own tick');
+  dlg.querySelector('button[value=cancel]').click();
+}));
+
+test('A-06: no warning when the invoice is the same as the one printed', withApp('/dashboard', async app => {
+  await addTracking(app);
+  await printInvoice(app);
+  const dlg = await openRecordDialog(app);
+  assert(!/not the invoice you printed/i.test(dlg.textContent), 'no change warning');
+  assert(!dlg.querySelector('input[name=changed]'), 'no extra tick');
+  dlg.querySelector('button[value=cancel]').click();
+}));

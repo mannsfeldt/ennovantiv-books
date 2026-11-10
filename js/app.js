@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111005';
-import { DemoStore } from './store-demo.js?v=2026111005';
-import { compressImage, readReceipt } from './receipt.js?v=2026111005';
+import { GraphStore } from './store-graph.js?v=2026111006';
+import { DemoStore } from './store-demo.js?v=2026111006';
+import { compressImage, readReceipt } from './receipt.js?v=2026111006';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -901,7 +901,11 @@ function viewInvoices(view, sub) {
     $('#print').onclick = async () => {
       await busy('Checking the workbook…', () => store.loadAll(['Projects', 'Tasks', 'Disbursements', 'Invoices']));
       const fresh = computeInvoice(client, date);
-      if (await preInvoiceCheck(client, date, fresh, 'print')) printInvoice(fresh);
+      if (await preInvoiceCheck(client, date, fresh, 'print')) {
+        // Remember what was printed, so Record can tell if the invoice changed afterwards
+        ls.set('printed:' + fresh.number, { total: fresh.total, when: new Date().toISOString(), tasks: fresh.tasks.map(taskSig), disb: fresh.disb.map(d => disbSig(d.row)) });
+        printInvoice(fresh);
+      }
     };
     $('#rec').onclick = () => recordInvoice(client, date, view);
   };
@@ -1017,6 +1021,7 @@ async function finishInvoice(j) {
     logActivity('Marked invoiced', `Tasks ×${tasks.rows.length}, Disbursements ×${disb.rows.length}`, j.number);
   }
   ls.set(PENDING, null);
+  ls.set('printed:' + j.number, null);
   await store.loadAll(tables);
   return { address, missing };
 }
@@ -1467,13 +1472,22 @@ async function preInvoiceCheck(client, dateISO, inv, action) {
   if (nonBill.length) warn.push(`${nonBill.length} non-billable ${nonBill.length === 1 ? 'entry' : 'entries'} (${hrs(nonBill.reduce((s, r) => s + num(r.Hours), 0))} h) on ${esc(client)} projects this period won't be invoiced: ${[...new Set(nonBill.map(r => esc(r.Project)))].join(', ')}.`);
   if (later.length) warn.push(`${later.length} included ${later.length === 1 ? 'entry is' : 'entries are'} dated after ${toISO(per.to)}, the invoice date.`);
   if (earlier.length) warn.push(`${earlier.length} included ${earlier.length === 1 ? 'entry is' : 'entries are'} from before this period (e.g. made billable after a PO).`);
+  // Printed earlier on this device? What gets recorded should be what was sent.
+  const printed = action === 'record' ? ls.get('printed:' + inv.number, null) : null;
+  let changed = '';
+  if (printed) {
+    const extra = (a, b) => { const left = [...b]; return a.filter(x => { const i = left.indexOf(x); if (i < 0) return true; left.splice(i, 1); return false; }).length; };
+    const now = [...inv.tasks.map(taskSig), ...inv.disb.map(d => disbSig(d.row))], then = [...printed.tasks, ...printed.disb];
+    const added = extra(now, then), removed = extra(then, now);
+    if (added || removed || Math.round(printed.total * 100) !== Math.round(inv.total * 100)) changed = `<div class="warnbox small"><b>This is not the invoice you printed.</b> Printed ${new Date(printed.when).toLocaleString('en-CA')}: ${money(printed.total)}. Now: ${money(inv.total)} (${added} ${added === 1 ? 'entry' : 'entries'} added, ${removed} removed since). Cancel to fix the time or reprint; or record the new amount and send the client the updated invoice.<label class="check"><input type="checkbox" name="changed" required> Record ${money(inv.total)}; I will resend the invoice</label></div>`;
+  }
   const data = await modal(`
     <h2>Before you ${action} ${esc(inv.number)}</h2>
     <p class="small muted">Billing period ${longDate(toISO(per.from))} – ${longDate(toISO(per.to))}. Check everyone's time is in before invoicing.</p>
     <div class="scroll"><table class="list"><thead><tr><th>Worker</th><th class="r">Hours this period</th><th class="r">On ${esc(client)}</th><th>Last entry</th></tr></thead><tbody>
       ${workers.map(n => { const l = last(n); const stale = l < per.to - 3; return `<tr><td>${esc(n)}</td><td class="r">${hrs(inPer.filter(r => r.Worker === n).reduce((s, r) => s + num(r.Hours), 0))}</td><td class="r">${hrs(inPer.filter(r => r.Worker === n && projects.has(r.Project)).reduce((s, r) => s + num(r.Hours), 0))}</td><td>${l ? `<span class="${stale ? 'pill warn' : ''}">${toISO(l)}</span>` : '—'}</td></tr>`; }).join('')}
     </tbody></table></div>
-    ${warn.map(w => `<p class="warnbox small">${w}</p>`).join('')}
+    ${changed}${warn.map(w => `<p class="warnbox small">${w}</p>`).join('')}
     ${action === 'record' ? `<p class="dest"><span>Recording adds <b>${esc(inv.number)}</b> (${money(inv.total)}) to the Invoices table${$('#markinv')?.checked ? ` and marks ${inv.tasks.length} time entries and ${inv.disb.length} disbursements as Invoiced${linkCol('Tasks') ? ', with the invoice number' : ''}` : ''}.</span></p>` : ''}
     <label class="check"><input type="checkbox" name="ok" required> All time for this period has been entered</label>
     <div class="actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">${action === 'print' ? 'Print' : 'Record invoice'}</button></div>`, 'wide');
