@@ -1,6 +1,6 @@
 // In-memory store with made-up sample data, same interface as GraphStore.
 // Lets you try the app (?demo) without Microsoft sign-in. Nothing is saved.
-import { parseTable, rowAddress } from './store-graph.js?v=2026112307';
+import { parseTable, rowAddress } from './store-graph.js?v=2026112308';
 
 const today = new Date();
 const serial = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
@@ -121,7 +121,8 @@ export class DemoStore {
       const thisInv = comp === 1 ? f - billed : hrs * rt;
       const remaining = type === 'Fixed Fee' && comp < 1 ? f - billed - thisInv : 0;
       const totalH = d.Tasks.filter(t => t[1] === name).reduce((s, t) => s + t[2], 0);
-      return [...p.slice(0, 9), comp, p[10] ?? '', hrs, thisInv, billed, total, remaining, 0, totalH, '', p[19] ?? ''];
+      const overage = type === 'Fixed Fee' ? Math.max(billedH * rt - f, 0) : 0;   // hours billed beyond the fee
+      return [...p.slice(0, 9), comp, p[10] ?? '', hrs, thisInv, billed, total, remaining, overage, totalH, '', p[19] ?? ''];
     });
     for (const w of d.Workers) w[5] = d.Tasks.filter(t => t[4] === w[0]).reduce((s, t) => s + t[2], 0);
   }

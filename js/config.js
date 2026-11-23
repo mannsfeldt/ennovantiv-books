@@ -57,6 +57,9 @@ window.BOOKS_CONFIG = {
   activeStatuses: ['Active', 'Active*'],
   opportunityStatuses: ['Opportunity', 'Hold'],
 
+  // Fixed-fee projects are listed on the dashboard once this share of the fee is used.
+  budgetAlertAt: 0.8,
+
   // Expense report: per diem rates and mileage allowance rates are read from
   // these cells on the Mileage sheet, so updating the sheet updates the report.
   perDiemRange: 'Mileage!Q22:R26',      // label, rate: Breakfast … Private Acc

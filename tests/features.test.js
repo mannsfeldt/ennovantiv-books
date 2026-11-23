@@ -221,3 +221,59 @@ test('repeat: the Repeat button on a list row copies it into the form, dated tod
   equal([f.Project.value, f.Task.value, f.Hours.value, f.Date.value], ['Substation Upgrade', 'SLD revisions', '1.5', localISO()]);
   assert(/Log time/.test(app.$('#entry h2').textContent), 'still the new-entry form, not an edit');
 }));
+
+// ---- fixed-fee budget alerts ----
+const budgetCard = app => app.$('#budgets');
+async function setHours(app, project, hours, { invoiced = false } = {}) {
+  await app.store.addRow('Tasks', { Date: daysAgoSerial(5), Project: project, Hours: hours, Task: 'work', Worker: 'Demo User', Billable: true, Invoiced: invoiced, Paid: false });
+  await app.store.loadAll(['Projects', 'Tasks']);
+  await app.go('/time'); await app.go('/dashboard');
+}
+
+test('budget: the dashboard lists fixed-fee projects that are past 80% of their fee, most used first', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  await setHours(app, 'Feeder Study', 51);                  // 60 h budget: 85%
+  const card = budgetCard(app);
+  assert(card, 'a budget card');
+  assert(/Feeder Study/.test(card.textContent) && /85%/.test(card.textContent), card.textContent);
+  assert(!/Hospital Generator/.test(card.textContent), 'projects under 80% are not listed');
+}));
+
+test('budget: hours already billed beyond the fee count as over budget', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  await setHours(app, 'Hospital Generator', 100, { invoiced: true });   // $21,000 billed on an $18,000 fee
+  const row = [...budgetCard(app).querySelectorAll('[data-project]')].find(r => r.dataset.project === 'Hospital Generator');
+  assert(row, 'listed');
+  assert(/117%/.test(row.textContent) && /over/i.test(row.textContent), row.textContent);
+  await app.go('/time');
+  app.set('Project', 'Hospital Generator');
+  assert(/over budget/.test(app.$('#budget').textContent), `the Time form agrees: ${app.$('#budget').textContent}`);
+}));
+
+test('budget: over-budget projects come first, then approaching ones, then fully used ones', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  await setHours(app, 'Hospital Generator', 100, { invoiced: true });   // over: 117%
+  await setHours(app, 'Feeder Study', 51);                              // approaching: 85%
+  const names = [...budgetCard(app).querySelectorAll('[data-project]')].map(r => r.dataset.project);
+  equal(names, ['Hospital Generator', 'Feeder Study']);
+}));
+
+test('budget: says so when every fixed-fee project is comfortably within its fee', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  await setHours(app, 'Feeder Study', 5);
+  assert(/within/i.test(budgetCard(app).textContent) && !/Feeder Study/.test(budgetCard(app).textContent), budgetCard(app).textContent);
+}));
+
+test('budget: opportunities and on-hold projects are not alerted', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  await setHours(app, 'Arc Flash Review', 44);              // 44 of 45 h, but still an opportunity
+  assert(!/Arc Flash Review/.test(budgetCard(app).textContent));
+}));
+
+test('budget: tapping a project goes to the Time form with it selected', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  await setHours(app, 'Feeder Study', 51);
+  app.$('#budgets [data-project="Feeder Study"]').click(); await sleep(150);
+  equal(app.win.location.hash, '#/time');
+  equal(app.form().elements.Project.value, 'Feeder Study');
+}));

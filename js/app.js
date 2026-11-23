@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112307';
-import { DemoStore } from './store-demo.js?v=2026112307';
-import { compressImage, readReceipt } from './receipt.js?v=2026112307';
+import { GraphStore } from './store-graph.js?v=2026112308';
+import { DemoStore } from './store-demo.js?v=2026112308';
+import { compressImage, readReceipt } from './receipt.js?v=2026112308';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -456,6 +456,7 @@ function viewDashboard(view) {
         return `<a class="stat" href="#/report"><label>Last expense report</label><b>${r ? (r.days === 0 ? 'Today' : `${r.days} ${r.days === 1 ? 'day' : 'days'}`) : '—'}</b><small>${r ? `${longDate(r.iso)}${r.who ? ' · ' + esc(r.who) : ''}` : 'none on record yet'}</small></a>`; })()}
       <div class="stat"><label>Business km ${yr}</label><b>${num(kmYr).toLocaleString('en-CA')}</b><small>${rows('Mileage').filter(m => toISO(m.Date).startsWith(yr)).length} trips</small></div>
     </div>
+    ${budgetCardHTML()}
     <div class="grid2">
       <div class="card">
         <h2>Ready to invoice by client</h2>
@@ -471,6 +472,29 @@ function viewDashboard(view) {
       </div>
     </div>`;
   $$('[data-client]', view).forEach(a => a.onclick = () => ls.set('invClient', a.dataset.client));
+  $$('#budgets [data-project]', view).forEach(r => r.onclick = () => { ls.set('pickProject', r.dataset.project); location.hash = '#/time'; });
+}
+
+// Fixed-fee projects that have used most of their fee, so overruns are seen
+// before the invoice rather than after it.
+function budgetCardHTML() {
+  const at = cfg().budgetAlertAt || 0.8;
+  const fixed = rows('Projects').filter(p => cfg().activeStatuses.includes(p.Status) && budget(p)?.kind === 'fixed');
+  if (!fixed.length) return '';
+  // over the fee first, then approaching it (most used first), then fully used (nothing left but nothing over)
+  const state = b => b.spent - b.fee > 0.5 ? 0 : b.fee - b.spent <= 0.5 ? 2 : 1;
+  const hot = fixed.map(p => ({ p, b: budget(p) })).filter(x => x.b.pct >= at).sort((a, b) => state(a.b) - state(b.b) || b.b.pct - a.b.pct);
+  return `<div class="card" id="budgets">
+    <h2>Fixed-fee budgets</h2>
+    ${hot.length ? `<table class="list clickable"><tbody>${hot.map(({ p, b }) => {
+      const over = b.spent - b.fee > 0.5, full = !over && b.fee - b.spent <= 0.5;
+      const note = over ? `${hrs(-b.remainingH)} h over the fee` : full ? 'fee fully used' : `${hrs(b.remainingH)} h left of ${hrs(b.budgetH)}`;
+      return `<tr data-project="${esc(p.Name)}" title="Log time on ${esc(p.Name)}"><td><b>${esc(p.Name)}</b><br><small class="muted">${esc(p.ProjectID)} · ${esc(p.Client)}</small></td>
+        <td style="width:34%"><div class="bar ${over ? 'over' : ''}"><i style="width:${Math.min(100, b.pct * 100)}%"></i></div></td>
+        <td class="r proj-info ${over ? 'over' : ''}"><b>${Math.round(b.pct * 100)}%</b><br><small class="muted">${note}</small></td></tr>`;
+    }).join('')}</tbody></table>`
+      : `<p class="muted">✓ All ${fixed.length} fixed-fee projects are within ${Math.round(at * 100)}% of their fee.</p>`}
+  </div>`;
 }
 
 // =====================================================================
@@ -1421,14 +1445,16 @@ function viewInvoiceDetail(view, number) {
 // Projects: overview of open projects + add a new one. Editing and deleting
 // projects stays in the spreadsheet.
 // =====================================================================
-// Fixed-fee budget in hours, from the Projects table's own formulas:
-// Total = billed (incl. carryover) + uninvoiced billable time, in dollars.
+// Fixed-fee budget in hours, from the Projects table's own formulas. Total is
+// what has been billed (capped at the fee, with carryover) plus uninvoiced
+// billable time; Overage holds any hours billed beyond the fee, which Total
+// leaves out. Together they are everything spent on the project, in dollars.
 function budget(p) {
   if (!p) return null;
   const rate = num(p.Rate), fee = num(p.Fee);
   if (p.Type === 'Fixed Fee' && fee > 0 && rate > 0) {
-    const total = num(p.Total);
-    return { kind: 'fixed', fee, rate, budgetH: fee / rate, usedH: total / rate, remainingH: (fee - total) / rate };
+    const spent = num(p.Total) + num(p.Overage);
+    return { kind: 'fixed', fee, rate, spent, pct: spent / fee, budgetH: fee / rate, usedH: spent / rate, remainingH: (fee - spent) / rate };
   }
   if (rate > 0 && !isInternal(p)) return { kind: 'hourly', rate, unbilledH: num(p.Hours) };
   return null;
