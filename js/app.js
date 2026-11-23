@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112302';
-import { DemoStore } from './store-demo.js?v=2026112302';
-import { compressImage, readReceipt } from './receipt.js?v=2026112302';
+import { GraphStore } from './store-graph.js?v=2026112303';
+import { DemoStore } from './store-demo.js?v=2026112303';
+import { compressImage, readReceipt } from './receipt.js?v=2026112303';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -1521,7 +1521,6 @@ function reportHTML(r) {
       <div class="inv-title"><h1>Expense report</h1>
         <dl><dt>Submitted by</dt><dd><b>${esc(r.worker)}</b></dd>
         <dt>Period</dt><dd>${longDate(r.from)} – ${longDate(r.to)}</dd>
-        <dt>Next invoice</dt><dd>${longDate(nextBillingDay().iso)}</dd>
         <dt>Date</dt><dd>${longDate(todayISO())}</dd></dl>
       </div>
     </header>
@@ -1545,14 +1544,12 @@ function reportHTML(r) {
 
 async function viewExpenseReport(view) {
   const R = await loadRates();
-  // Reports run alongside invoicing, so they default to the next billing day
-  const nb = nextBillingDay();
-  const o = { worker: me, from: todayISO().slice(0, 4) + '-01-01', vehicle: false, perDiem: true, mileage: false, ...ls.get('report', {}) };
-  o.to = nb.iso.slice(0, 4) === todayISO().slice(0, 4) ? nb.iso : todayISO().slice(0, 4) + '-12-31';
+  // An expense report has no due date: it runs from the start of the year to today
+  const o = { worker: me, vehicle: false, perDiem: true, mileage: false, ...ls.get('report', {}) };
+  o.to = todayISO();
   o.from = o.to.slice(0, 4) + '-01-01';
   view.innerHTML = `
     <div class="page-head"><div><a class="small" href="#/expenses">← Expenses</a><h1>Expense report</h1></div></div>
-    <p class="nextbill">${icon('M3 5h18v16H3zM3 10h18M8 3v4M16 3v4')}<span>Next invoice: <b>${weekday(nb.iso)}</b>${nb.shifted ? ` (Monday is ${esc(nb.reason)})` : ''}. The report runs to that day by default.</span></p>
     <div class="card" id="rform">
       <div class="row-inline">
         <div class="field"><label for="r-w">Submitted by</label><select id="r-w">${rows('Workers').map(w => `<option ${w.Name === o.worker ? 'selected' : ''}>${esc(w.Name)}</option>`).join('')}</select></div>
