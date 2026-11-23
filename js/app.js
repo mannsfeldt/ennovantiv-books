@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112309';
-import { DemoStore } from './store-demo.js?v=2026112309';
-import { compressImage, readReceipt } from './receipt.js?v=2026112309';
+import { GraphStore } from './store-graph.js?v=2026112310';
+import { DemoStore } from './store-demo.js?v=2026112310';
+import { compressImage, readReceipt } from './receipt.js?v=2026112310';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -134,13 +134,24 @@ function useBook(w) {
   const next = { fileShareUrl: w.url, receiptFolder: w.receiptFolder || CFG.receiptFolder };
   ls.set('settings', next); Object.assign(CFG, next); Object.assign(store.cfg, next);
 }
+// What is still unpaid in the open workbook, kept with its entry so the other
+// workbooks can show it: each year's workbook only knows its own invoices.
+function openSummary() {
+  const open = rows('Invoices').filter(i => !i.Paid && num(i.Amount));
+  return { n: open.length, total: Math.round(open.reduce((s, i) => s + num(i.Amount), 0) * 100) / 100, at: todayISO() };
+}
+function saveOpenSummary() {
+  const list = books(), w = list.find(x => x.url === CFG.fileShareUrl);
+  if (w) { w.open = openSummary(); saveBooks(list); }
+}
+const openNote = w => w.url !== CFG.fileShareUrl && w.open?.n ? ` · ${w.open.n} unpaid · ${money(w.open.total)}` : '';
 // after a workbook has opened: add it to the list, or refresh its entry
 function rememberBook(extra = {}) {
   const list = books(), f = store.file;
   let w = list.find(x => x.url === CFG.fileShareUrl) || (f.itemId && list.find(x => x.itemId === f.itemId));
   if (!w) { w = { id: 'wb' + Date.now().toString(36), nickname: '' }; list.push(w); }
   Object.assign(w, {
-    url: CFG.fileShareUrl, name: f.name, itemId: f.itemId || '', lastUsed: new Date().toISOString(),
+    url: CFG.fileShareUrl, name: f.name, itemId: f.itemId || '', lastUsed: new Date().toISOString(), open: openSummary(),
     receiptFolder: w.receiptFolder || (fileYear(f.name) ? 'Receipts/' + fileYear(f.name) : CFG.receiptFolder),
   }, extra);
   saveBooks(list);
@@ -158,7 +169,7 @@ function toggleMenu() {
   const m = document.createElement('div');
   m.className = 'wbmenu'; m.setAttribute('role', 'menu');
   m.innerHTML = `<div class="wbhead">Workbook</div>
-    ${sortedBooks().map(w => `<button role="menuitem" data-wb="${esc(w.id)}" class="${w.url === CFG.fileShareUrl ? 'cur' : ''}"><span class="tick">${w.url === CFG.fileShareUrl ? '✓' : ''}</span><span><b>${esc(bookLabel(w))}</b><small>${esc(w.name)}</small></span></button>`).join('')}
+    ${sortedBooks().map(w => `<button role="menuitem" data-wb="${esc(w.id)}" class="${w.url === CFG.fileShareUrl ? 'cur' : ''}"><span class="tick">${w.url === CFG.fileShareUrl ? '✓' : ''}</span><span><b>${esc(bookLabel(w))}</b><small>${esc(w.name)}${esc(openNote(w))}</small></span></button>`).join('')}
     <hr><a href="${esc(store.file?.webUrl || '#')}" target="_blank" rel="noopener">Open this workbook in Excel ↗</a>
     <a href="#/settings" data-close>Manage workbooks…</a>`;
   document.body.appendChild(m);
@@ -264,6 +275,7 @@ async function askWhoYouAre() {
 async function refresh() {
   RATES = null;
   await busy('Refreshing from Excel…', loadEverything);
+  saveOpenSummary();
   route();
   toast('Up to date with the workbook.', 'info', 2000);
 }
@@ -401,6 +413,20 @@ const weekday = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-CA', {
 // =====================================================================
 // Dashboard
 // =====================================================================
+// Time is recorded, and the first invoice of the following year issued, in the
+// workbook for the year the work was done. So in January the previous year's
+// workbook is still the right one for invoices and payments; new time belongs in
+// the new year's. Say so, and offer the one-tap switch.
+function yearNoteHTML(yr) {
+  const wy = workbookYear();
+  if (!wy || wy === yr) return '';
+  const target = books().find(w => fileYear(w.name) === yr && w.url !== CFG.fileShareUrl);
+  const go = target ? `<button type="button" class="btn sm" data-switch="${esc(target.id)}">Switch to ${esc(bookLabel(target))}</button>` : `<a href="#/settings">Add the ${yr} workbook in Settings</a>`;
+  return Number(wy) < Number(yr)
+    ? `<p class="warnbox">This is the <b>${wy} workbook</b> (${esc(store.file.name)}), and it is now ${yr}. That is right for finishing ${wy}: invoicing and payments for ${wy} work. New time and expenses belong in ${yr}. ${go}</p>`
+    : `<p class="warnbox">This is the <b>${wy} workbook</b> (${esc(store.file.name)}), but it is still ${yr}. ${go}</p>`;
+}
+
 // When was an expense report last filed? Printing one, or marking one reimbursed,
 // both count; whichever is most recent. Uses the shared log when there is one,
 // plus this device's own log.
@@ -416,6 +442,7 @@ function lastExpenseReport() {
 }
 
 function viewDashboard(view) {
+  saveOpenSummary();
   const yr = todayISO().slice(0, 4), mo = todayISO().slice(0, 7);
   const own = cfg().companyClientRow;
   const projects = rows('Projects').filter(p => p.Client !== own);
@@ -438,7 +465,8 @@ function viewDashboard(view) {
 
   view.innerHTML = `
     <div class="page-head"><h1>Hello${firstName(me || user.name) ? ', ' + esc(firstName(me || user.name)) : ''}</h1><p class="muted">${longDate(todayISO())}</p></div>
-    ${workbookYear() && workbookYear() !== yr ? `<p class="warnbox">It is ${yr}, but this device is connected to <b>${esc(store.file.name)}</b>, the ${workbookYear()} workbook. New entries would go into that file. Paste the ${yr} workbook's link in <a href="#/settings">Settings</a>.</p>` : ''}
+    ${yearNoteHTML(yr)}
+    ${books().filter(w => w.url !== CFG.fileShareUrl && w.open?.n).map(w => `<p class="infobar">Also unpaid in <b>${esc(bookLabel(w))}</b> (as of ${esc(longDate(w.open.at))}): ${w.open.n} ${w.open.n === 1 ? 'invoice' : 'invoices'} · ${money(w.open.total)}. <button type="button" class="btn sm" data-switch="${esc(w.id)}">Open ${esc(bookLabel(w))}</button></p>`).join('')}
     <div class="quick">
       <a class="btn primary" href="#/time">+ Time</a>
       <a class="btn primary" href="#/expenses/scan">Scan receipt</a>
@@ -471,6 +499,7 @@ function viewDashboard(view) {
       </div>
     </div>`;
   $$('[data-client]', view).forEach(a => a.onclick = () => ls.set('invClient', a.dataset.client));
+  $$('[data-switch]', view).forEach(b => b.onclick = () => switchBook(b.dataset.switch));
 }
 
 // =====================================================================
@@ -1094,6 +1123,7 @@ function modal(html, size = '') {
 }
 
 function viewInvoices(view, sub) {
+  saveOpenSummary();
   const invs = rows('Invoices').sort((a, b) => num(b.Date) - num(a.Date) || b._row - a._row);
   const open = invs.filter(i => !i.Paid);
   const clients = rows('Clients').filter(c => c.Name !== cfg().companyClientRow);
@@ -1861,7 +1891,7 @@ function viewSettings(view) {
         <p class="small muted">The workbooks this device has opened. Switch between them from the name at the top of the screen, and give each a short nickname.</p>
         ${books().length ? `<table class="list wb-list"><tbody>${sortedBooks().map(w => `<tr>
           <td><input class="nick" data-id="${esc(w.id)}" value="${esc(w.nickname)}" placeholder="${esc(fileYear(w.name) || 'Nickname')}" aria-label="Nickname for ${esc(w.name)}"></td>
-          <td class="hide-sm"><small class="muted">${esc(w.name)}</small></td>
+          <td class="hide-sm"><small class="muted">${esc(w.name)}${esc(openNote(w))}</small></td>
           <td class="r">${w.url === CFG.fileShareUrl ? '<span class="pill solid">Open</span>' : `<button class="btn sm" data-use="${esc(w.id)}">Open</button> <button class="btn sm" data-del="${esc(w.id)}" title="Forget this link on this device">Remove</button>`}</td>
         </tr>`).join('')}</tbody></table>` : '<p class="muted">No workbook yet. Add one below.</p>'}
         ${cur ? `<div class="field" style="margin-top:1rem"><label for="s-rf">Receipts folder for the open workbook (next to it)</label>

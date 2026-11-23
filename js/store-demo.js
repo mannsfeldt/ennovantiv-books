@@ -1,6 +1,6 @@
 // In-memory store with made-up sample data, same interface as GraphStore.
 // Lets you try the app (?demo) without Microsoft sign-in. Nothing is saved.
-import { parseTable, rowAddress } from './store-graph.js?v=2026112309';
+import { parseTable, rowAddress } from './store-graph.js?v=2026112310';
 
 const today = new Date();
 const serial = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
@@ -93,11 +93,11 @@ export class DemoStore {
   async openFile(url = '') {
     if (/fail/.test(url)) throw new Error('Demo: that workbook cannot be opened');
     const year = (/(20\d\d)/.exec(url) || [])[1];
-    const other = year && year !== '2026';
+    const other = year && year !== '2026' && year !== String(new Date().getFullYear());
     this.data = seed();                 // the demo's ChangeLog table does not exist until Settings adds it
     this.tables = {};
     if (other) for (const t of ['Tasks', 'Expenses', 'Mileage', 'Invoices', 'Disbursements']) this.data[t] = [];
-    this.file = { name: other ? `Bookkeeping ${year} DEMO.xlsx` : 'Bookkeeping DEMO.xlsx', webUrl: '#', driveId: 'demo', itemId: 'demo-' + (year || '2026') };
+    this.file = { name: `Bookkeeping ${year || '2026'} DEMO.xlsx`, webUrl: '#', driveId: 'demo', itemId: 'demo-' + (year || '2026') };
     // Pretend we are the company itself
     this.cfg = { ...this.cfg, companyName: 'Your Company Inc.', taxNumber: '000000000-RT0001', allowedUsers: [] };
     return this.file;

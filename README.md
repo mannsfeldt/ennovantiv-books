@@ -89,6 +89,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 - **Invoice pages:** click any issued invoice to see every time entry and disbursement billed on it, grouped by project. **Print time detail** gives the client a branded breakdown.
 - **Expected invoice:** in the Time list, billable time not yet invoiced shows the invoice it's expected to go on (e.g. `→ WF2611` for the November billing day). This is display only. The number is written only when the invoice is actually recorded, so a skipped or delayed billing run never leaves wrong numbers in the workbook.
 - **Several workbooks (2026 / 2027):** the workbook's name at the top is a menu. Pick another saved workbook to switch in one tap, or open **Settings → Workbooks** to give each a nickname, add a new one by its link (kept only if it opens) or remove one. The list is kept on each device, and the receipts folder follows the workbook's year. An interrupted invoice stays tied to the workbook it was recorded in.
+- **Year boundary:** time is recorded, and the first invoice of the next year issued, in the workbook for the year the work was done. So in January the previous year's workbook is still the right one for invoicing and payments, and new time goes in the new year's. The dashboard says which workbook you are in and offers a one-tap switch, shows what is still unpaid in your other workbooks (as of your last visit there), and the switcher menu shows it too.
 - **Who you are:** the app matches the signed-in person to the Workers table by sign-in address, then by name. If neither matches it asks once ("Who are you?") and remembers. Settings shows the match with a *Not you?* link.
 - **Shared change log:** **Settings → Shared change log** adds a `ChangeLog` sheet to the workbook. Every change made through the app (and every printed invoice or expense report) is then recorded there with who, when, what and where, and the dashboard shows it for everyone. It never delays a save; anything that couldn't be sent waits and goes with the next write.
 - **Dashboard:** *Last expense report* counts the days since a report was last printed or marked reimbursed. The hours-remaining panel on the Time form counts `Total + Overage` from the Projects table, so hours billed beyond the fee show as over budget.
@@ -119,7 +120,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 
 ## Updating the app
 
-Each file is referenced with a version tag (`?v=2026112309` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
+Each file is referenced with a version tag (`?v=2026112310` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
 
 ## Tests
 
