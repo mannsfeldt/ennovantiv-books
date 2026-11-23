@@ -147,3 +147,21 @@ test('report days: printing a report starts the count again from today (even wit
   await app.go('/dashboard');
   assert(/today/i.test(reportTile(app).textContent), reportTile(app).textContent);
 }));
+
+// ---- project order in the Time form ----
+const projectOrder = app => [...app.form().elements.Project.querySelectorAll('optgroup')].map(g => ({ group: g.label, items: [...g.children].map(o => o.value) }));
+const daysAgoSerial = n => { const d = new Date(); d.setDate(d.getDate() - n); return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5); };
+
+test('projects: the list runs from most recently used to least, with new projects first, not grouped by client', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];                                // start from a known history
+  const log = (project, daysAgo, worker = 'Demo User') => app.store.addRow('Tasks', { Date: daysAgoSerial(daysAgo), Project: project, Hours: 1, Task: 't', Worker: worker, Billable: true, Invoiced: false, Paid: false });
+  await log('Feeder Study', 20); await log('Internal', 2); await log('Substation Upgrade', 0);
+  await log('Feeder Study', 0, 'Alex Helper');              // someone else's work must not count as mine
+  await app.store.addRow('Projects', { Name: 'Brand New', ProjectID: 'NW-009', Client: 'Northwind Utilities', Status: 'Active', Type: 'Hourly', Rate: 195 });
+  await app.store.loadAll(['Projects', 'Tasks']);
+  await app.go('/time');
+  const groups = projectOrder(app);
+  equal(groups[0].items, ['Brand New', 'Hospital Generator', 'Substation Upgrade', 'Internal', 'Feeder Study', 'Training'], 'one list, newest and most recently used first');
+  assert(!groups.some(g => /Northwind|Contoso/.test(g.group)), 'no client groups');
+  equal(groups[1].items, ['Arc Flash Review'], 'opportunities stay in their own group at the end');
+}));

@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112305';
-import { DemoStore } from './store-demo.js?v=2026112305';
-import { compressImage, readReceipt } from './receipt.js?v=2026112305';
+import { GraphStore } from './store-graph.js?v=2026112306';
+import { DemoStore } from './store-demo.js?v=2026112306';
+import { compressImage, readReceipt } from './receipt.js?v=2026112306';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -483,17 +483,23 @@ const isInternal = p => p?.Type === 'Internal';
 const isOpportunity = p => (cfg().opportunityStatuses || []).includes(p?.Status);
 // Internal and opportunity (pre-PO) work isn't billable by default
 const defaultBillable = p => !!p && !isInternal(p) && !isOpportunity(p);
-// Internal projects first (most used), then client projects grouped by
-// client, then opportunities / on-hold work waiting for a PO.
+// Projects in the order you're likely to want them: new projects (the last few
+// added to the Projects table, not yet used by you) first, then the ones you've
+// logged time on, most recent first, then the rest, newest first. Opportunities and
+// projects on hold are listed separately at the end, in the same order.
 function projectOptions(all) {
   const open = [...cfg().activeStatuses, ...(cfg().opportunityStatuses || [])];
-  const ps = rows('Projects').filter(p => all || open.includes(p.Status));
-  const groups = [{ group: 'Internal', items: ps.filter(isInternal).map(p => p.Name) }];
-  const byClient = {};
-  ps.filter(p => !isInternal(p) && !isOpportunity(p)).forEach(p => (byClient[p.Client] ||= []).push(p.Name));
-  Object.keys(byClient).sort().forEach(c => groups.push({ group: c, items: byClient[c] }));
-  groups.push({ group: 'Opportunities & on hold (not billable until PO)', items: ps.filter(p => !isInternal(p) && isOpportunity(p)).map(p => p.Name) });
-  return groups.filter(g => g.items.length);
+  const every = rows('Projects');
+  const newest = new Set(every.slice(-3).map(p => p.Name));
+  const last = {};
+  for (const t of rows('Tasks')) if (!me || t.Worker === me) last[t.Project] = Math.max(last[t.Project] || 0, num(t.Date));
+  const rank = p => last[p.Name] ? [2, last[p.Name], p._row] : newest.has(p.Name) ? [3, p._row, 0] : [1, p._row, 0];
+  const byRecent = (a, b) => { const x = rank(a), y = rank(b); return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]; };
+  const ps = every.filter(p => all || open.includes(p.Status)).sort(byRecent);
+  return [
+    { group: 'Most recent first', items: ps.filter(p => !isOpportunity(p)).map(p => p.Name) },
+    { group: 'Opportunities & on hold (not billable until PO)', items: ps.filter(p => isOpportunity(p) && !isInternal(p)).map(p => p.Name) },
+  ].filter(g => g.items.length);
 }
 const projectRow = name => rows('Projects').find(p => p.Name === name);
 const distinct = (table, col, filter = () => true) => {
