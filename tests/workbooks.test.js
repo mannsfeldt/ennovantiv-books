@@ -70,6 +70,44 @@ test('wb: trying the demo never touches the saved workbook links of the live app
   equal(JSON.parse(list).length, 1, 'live list untouched');
 });
 
+// ---- a colour for each workbook ----
+const accent = app => app.win.getComputedStyle(app.doc.documentElement).getPropertyValue('--blue').trim().toLowerCase();
+const hue = hex => {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  if (!d) return { h: 0, s: 0 };
+  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: (h * 60 + 360) % 360, s: d / (1 - Math.abs(mx + mn - 1) || 1) };
+};
+
+test('colour: each workbook gets its own accent colour, and the app changes colour when you switch', withApp('/dashboard', async app => {
+  const first = accent(app);
+  assert(/^#[0-9a-f]{6}$/.test(first), `an accent is set: ${first}`);
+  await addWorkbook(app, 'demo://2027', '2027');
+  const second = accent(app);
+  assert(second !== first, `the new workbook has a different colour (${first} vs ${second})`);
+  await openMenu(app);
+  app.$$('.wbmenu [data-wb]').find(b => !b.textContent.includes('2027')).click();
+  await app.idle(); await sleep(200);
+  equal(accent(app), first, 'back to the first workbook\'s colour');
+}));
+
+test('colour: pick one next to the nickname in Settings; it applies at once and is remembered', withApp('/settings', async app => {
+  const radio = app.$('.wb-list input[type=radio][value=magenta]');
+  assert(radio, 'a magenta swatch beside the current workbook');
+  radio.click(); await sleep(80);
+  equal(accent(app), '#c2569b');
+  equal(JSON.parse(localStorage.getItem('books-demo:workbooks'))[0].color, 'magenta', 'saved on this device');
+}));
+
+test('colour: the palette has no red or green (the brand reserves them for electrical safety)', withApp('/settings', async app => {
+  const colours = app.$$('.wb-list tr:first-child .sw i').map(i => app.win.getComputedStyle(i).backgroundColor);
+  assert(colours.length >= 5, `swatches shown: ${colours.length}`);
+  for (const c of colours) {
+    const [r, g, b] = c.match(/\d+/g).map(Number), { h, s } = hue('#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join(''));
+    assert(s < .2 || !(h < 20 || h > 340 || (h > 80 && h < 170)), `${c} (hue ${Math.round(h)}) is red or green`);
+  }
+}));
+
 // ---- the year boundary: December's work is invoiced in January, in the same workbook as the time ----
 const bar = app => app.$('.infobar')?.textContent || '';
 

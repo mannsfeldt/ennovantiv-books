@@ -2,7 +2,10 @@
 :root {
   --navy: #0B1F3A;
   --navy-2: #122B50;
-  --blue: #5B7FD4;
+  --blue: #5B7FD4;   /* the accent: set per workbook (js/app.js) */
+  --blue-soft: color-mix(in srgb, var(--blue) 14%, white);
+  --blue-dark: color-mix(in srgb, var(--blue) 82%, black);
+  --blue-glow: color-mix(in srgb, var(--blue) 25%, transparent);
   --cerulean: #4A90D9;
   --steel: #2A4A72;
   --grey-1: #C8D4E8;
@@ -44,7 +47,7 @@ code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: .85em;
 .filechip { display: inline-flex; align-items: center; gap: .45rem; color: var(--grey-1); text-decoration: none; font-size: .82rem;
   border: 1px solid var(--steel); padding: .3rem .7rem; border-radius: 999px; max-width: 46vw; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .filechip:hover { color: #fff; border-color: var(--blue); }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex: none; box-shadow: 0 0 0 3px rgba(91,127,212,.25); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex: none; box-shadow: 0 0 0 3px var(--blue-glow); }
 .dot.off { background: var(--muted); box-shadow: none; }
 .iconbtn { background: none; border: 1px solid var(--steel); color: var(--grey-1); border-radius: 8px; width: 36px; height: 36px; display: grid; place-items: center; cursor: pointer; }
 .iconbtn:hover { color: #fff; border-color: var(--blue); }
@@ -66,7 +69,7 @@ code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: .85em;
   .nav { top: 57px; bottom: 0; left: 0; width: 200px; padding: 1rem .6rem; border-right: 1px solid var(--line); }
   .nav a { padding: .6rem .8rem; border-radius: 8px; margin-bottom: .15rem; }
   .nav a:hover { background: var(--bg); }
-  .nav a.active { background: #E8EEFA; }
+  .nav a.active { background: var(--blue-soft); }
   .view { margin-left: 200px; padding: 1.75rem 2rem 3rem; }
 }
 @media (max-width: 899px) {
@@ -104,7 +107,7 @@ code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: .85em;
   padding: .6rem 1rem; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--navy); cursor: pointer; text-decoration: none; min-height: 42px; }
 .btn:hover { border-color: var(--blue); }
 .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
-.btn.primary:hover { background: #4A6FC4; }
+.btn.primary:hover { background: var(--blue-dark); }
 .btn.danger { color: var(--warn); border-color: #F1D3A1; margin-left: auto; }
 .btn.sm { padding: .3rem .7rem; min-height: 32px; font-size: .82rem; }
 .btn.lg { padding: .85rem 1.5rem; font-size: 1rem; width: 100%; margin: 1rem 0; }
@@ -126,7 +129,7 @@ details summary { cursor: pointer; color: var(--steel); font-weight: 500; font-s
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .4rem; }
 .row-inline { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 1rem; }
 .actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem; }
-.form.editing { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(91,127,212,.15); }
+.form.editing { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-glow); }
 .dest { display: flex; gap: .5rem; align-items: flex-start; font-size: .8rem; color: var(--muted); background: var(--bg); border-radius: 8px; padding: .55rem .7rem; margin: .5rem 0 0; }
 .dest svg { width: 16px; height: 16px; flex: none; margin-top: .1rem; color: var(--steel); }
 .warnbox { background: var(--warn-bg); color: var(--warn); border-left: 3px solid var(--warn); padding: .6rem .8rem; border-radius: 4px; }
@@ -150,7 +153,7 @@ table.list td { padding: .6rem .5rem; border-bottom: 1px solid #EEF2F7; vertical
 table.list td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--muted); }
 table.list.clickable tbody tr { cursor: pointer; }
 table.list.clickable tbody tr:hover { background: #F6F8FC; }
-table.list tr.sel { background: #E8EEFA !important; }
+table.list tr.sel { background: var(--blue-soft) !important; }
 td.grow { width: 40%; }
 ul.log { list-style: none; padding: 0; margin: 0; font-size: .88rem; }
 ul.log li { padding: .55rem 0; border-bottom: 1px solid #EEF2F7; }
@@ -234,7 +237,7 @@ dialog.modal .scroll table.list td { vertical-align: middle; }
 .inv-table tr.sub td { font-weight: 600; border-bottom: none; background: none !important; }
 .inv-table tr.sub td:nth-child(3) { text-align: right; }
 .invoice h3 small { font-weight: 400; letter-spacing: 0; text-transform: none; color: #767676; }
-.bulk { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; background: #E8EEFA; border-left: 3px solid var(--blue); border-radius: 6px; padding: .6rem .8rem; margin-bottom: .75rem; font-size: .88rem; }
+.bulk { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; background: var(--blue-soft); border-left: 3px solid var(--blue); border-radius: 6px; padding: .6rem .8rem; margin-bottom: .75rem; font-size: .88rem; }
 .bulk span { flex: 1; min-width: 200px; }
 .list-head #lf { width: auto; max-width: 220px; }
 /* budget panel (Time) and project list */
@@ -277,7 +280,7 @@ button.filechip { background: none; font: inherit; font-size: .82rem; cursor: po
 .wbmenu button:hover, .wbmenu a:hover { background: var(--bg); }
 .wbmenu button small { display: block; color: var(--muted); font-size: .76rem; }
 .wbmenu .tick { width: 1em; color: var(--blue); flex: none; }
-.wbmenu button.cur { background: #E8EEFA; }
+.wbmenu button.cur { background: var(--blue-soft); }
 .wbmenu hr { border: 0; border-top: 1px solid var(--line); margin: .3rem 0; }
 .wb-list input.nick { min-height: 36px; padding: .3rem .5rem; font-size: 14px; }
 a.stat { text-decoration: none; color: inherit; }
@@ -290,5 +293,15 @@ a.stat:hover { border-color: var(--blue); }
 .chip small { font-weight: 400; color: var(--muted); font-size: .76rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip:hover { border-color: var(--blue); background: #F6F8FC; }
 
-.infobar { background: #E8EEFA; border-left: 3px solid var(--blue); border-radius: 6px; padding: .6rem .8rem; margin: 0 0 1rem; font-size: .9rem; display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+.infobar { background: var(--blue-soft); border-left: 3px solid var(--blue); border-radius: 6px; padding: .6rem .8rem; margin: 0 0 1rem; font-size: .9rem; display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
 .warnbox .btn, .infobar .btn { margin-left: .25rem; }
+
+/* the workbook's colour: a stripe under the header, so you always know which year you are in */
+.topbar { border-bottom: 3px solid var(--blue); }
+.swatches { display: inline-flex; gap: .3rem; align-items: center; }
+.sw { position: relative; display: inline-block; width: 22px; height: 22px; cursor: pointer; }
+.sw input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; width: 100%; height: 100%; min-height: 0; }
+.sw i { display: block; width: 100%; height: 100%; border-radius: 50%; box-sizing: border-box; border: 2px solid transparent; }
+.sw input:checked + i { border-color: var(--navy); box-shadow: 0 0 0 2px #fff inset; }
+.sw input:focus-visible + i { outline: 2px solid var(--navy); outline-offset: 2px; }
+.swdot { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: .4rem; }

@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112310';
-import { DemoStore } from './store-demo.js?v=2026112310';
-import { compressImage, readReceipt } from './receipt.js?v=2026112310';
+import { GraphStore } from './store-graph.js?v=2026112311';
+import { DemoStore } from './store-demo.js?v=2026112311';
+import { compressImage, readReceipt } from './receipt.js?v=2026112311';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -90,6 +90,8 @@ async function busy(label, fn) {
 
 // ---------- boot ----------
 async function boot() {
+  const known = currentBook();
+  if (known) applyAccent(known);
   try {
     user = await store.init();
   } catch (e) {
@@ -122,6 +124,16 @@ async function boot() {
 // ---------- workbooks ----------
 // A device remembers the workbooks it has opened (2026, 2027, …), each with a
 // nickname, so switching years is one tap instead of pasting a long link.
+// Each workbook has an accent colour, so the app itself shows which year you are
+// in. No red or green: the brand keeps them for electrical safety colouring.
+const ACCENTS = [
+  { id: 'blue', name: 'Blue', hex: '#5B7FD4' }, { id: 'violet', name: 'Violet', hex: '#8B6FD8' },
+  { id: 'magenta', name: 'Magenta', hex: '#C2569B' }, { id: 'cyan', name: 'Cyan', hex: '#2FA3C7' },
+  { id: 'gold', name: 'Gold', hex: '#C99A2E' }, { id: 'steel', name: 'Steel', hex: '#7A8CA5' },
+];
+const colorOf = w => ACCENTS.find(a => a.id === (w?.color || 'blue')) || ACCENTS[0];
+const nextColor = list => (ACCENTS.find(a => !list.some(w => colorOf(w).id === a.id)) || ACCENTS[list.length % ACCENTS.length]).id;
+const applyAccent = w => document.documentElement.style.setProperty('--blue', colorOf(w).hex);
 const books = () => ls.get('workbooks', []);
 const saveBooks = list => ls.set('workbooks', list);
 const fileYear = name => (/(20\d\d)/.exec(name || '') || [])[1] || '';
@@ -149,7 +161,8 @@ const openNote = w => w.url !== CFG.fileShareUrl && w.open?.n ? ` · ${w.open.n}
 function rememberBook(extra = {}) {
   const list = books(), f = store.file;
   let w = list.find(x => x.url === CFG.fileShareUrl) || (f.itemId && list.find(x => x.itemId === f.itemId));
-  if (!w) { w = { id: 'wb' + Date.now().toString(36), nickname: '' }; list.push(w); }
+  if (!w) { w = { id: 'wb' + Date.now().toString(36), nickname: '', color: nextColor(list) }; list.push(w); }
+  else if (!w.color) w.color = 'blue';
   Object.assign(w, {
     url: CFG.fileShareUrl, name: f.name, itemId: f.itemId || '', lastUsed: new Date().toISOString(), open: openSummary(),
     receiptFolder: w.receiptFolder || (fileYear(f.name) ? 'Receipts/' + fileYear(f.name) : CFG.receiptFolder),
@@ -169,7 +182,7 @@ function toggleMenu() {
   const m = document.createElement('div');
   m.className = 'wbmenu'; m.setAttribute('role', 'menu');
   m.innerHTML = `<div class="wbhead">Workbook</div>
-    ${sortedBooks().map(w => `<button role="menuitem" data-wb="${esc(w.id)}" class="${w.url === CFG.fileShareUrl ? 'cur' : ''}"><span class="tick">${w.url === CFG.fileShareUrl ? '✓' : ''}</span><span><b>${esc(bookLabel(w))}</b><small>${esc(w.name)}${esc(openNote(w))}</small></span></button>`).join('')}
+    ${sortedBooks().map(w => `<button role="menuitem" data-wb="${esc(w.id)}" class="${w.url === CFG.fileShareUrl ? 'cur' : ''}"><span class="tick">${w.url === CFG.fileShareUrl ? '✓' : ''}</span><i class="swdot" style="background:${colorOf(w).hex}"></i><span><b>${esc(bookLabel(w))}</b><small>${esc(w.name)}${esc(openNote(w))}</small></span></button>`).join('')}
     <hr><a href="${esc(store.file?.webUrl || '#')}" target="_blank" rel="noopener">Open this workbook in Excel ↗</a>
     <a href="#/settings" data-close>Manage workbooks…</a>`;
   document.body.appendChild(m);
@@ -227,6 +240,7 @@ async function connect({ quiet = false } = {}) {
   const w = rememberBook();
   CFG.receiptFolder = store.cfg.receiptFolder = w.receiptFolder;
   me = identifyWorker();
+  applyAccent(w);
   paintChip();
   route();
   if (!me) askWhoYouAre();
@@ -1890,7 +1904,8 @@ function viewSettings(view) {
         <h2>Workbooks</h2>
         <p class="small muted">The workbooks this device has opened. Switch between them from the name at the top of the screen, and give each a short nickname.</p>
         ${books().length ? `<table class="list wb-list"><tbody>${sortedBooks().map(w => `<tr>
-          <td><input class="nick" data-id="${esc(w.id)}" value="${esc(w.nickname)}" placeholder="${esc(fileYear(w.name) || 'Nickname')}" aria-label="Nickname for ${esc(w.name)}"></td>
+          <td><input class="nick" data-id="${esc(w.id)}" value="${esc(w.nickname)}" placeholder="${esc(fileYear(w.name) || 'Nickname')}" aria-label="Nickname for ${esc(w.name)}">
+            <span class="swatches" role="radiogroup" aria-label="Colour for ${esc(bookLabel(w))}">${ACCENTS.map(a => `<label class="sw" title="${a.name}"><input type="radio" name="col-${esc(w.id)}" value="${a.id}" data-id="${esc(w.id)}" ${colorOf(w).id === a.id ? 'checked' : ''} aria-label="${a.name}"><i style="background:${a.hex}"></i></label>`).join('')}</span></td>
           <td class="hide-sm"><small class="muted">${esc(w.name)}${esc(openNote(w))}</small></td>
           <td class="r">${w.url === CFG.fileShareUrl ? '<span class="pill solid">Open</span>' : `<button class="btn sm" data-use="${esc(w.id)}">Open</button> <button class="btn sm" data-del="${esc(w.id)}" title="Forget this link on this device">Remove</button>`}</td>
         </tr>`).join('')}</tbody></table>` : '<p class="muted">No workbook yet. Add one below.</p>'}
@@ -1937,6 +1952,13 @@ function viewSettings(view) {
     const list = books(), w = list.find(x => x.id === i.dataset.id);
     if (!w) return;
     w.nickname = clean(i.value); saveBooks(list); paintChip();
+  });
+  $$('.wb-list input[type=radio]', view).forEach(r => r.onchange = () => {
+    const list = books(), w = list.find(x => x.id === r.dataset.id);
+    if (!w) return;
+    w.color = r.value; saveBooks(list);
+    if (w.url === CFG.fileShareUrl) applyAccent(w);
+    paintChip();
   });
   $$('[data-use]', view).forEach(b => b.onclick = async () => { await switchBook(b.dataset.use); viewSettings(view); });
   $$('[data-del]', view).forEach(b => b.onclick = () => {
