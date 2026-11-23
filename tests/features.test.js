@@ -152,7 +152,7 @@ test('report days: printing a report starts the count again from today (even wit
 const projectOrder = app => [...app.form().elements.Project.querySelectorAll('optgroup')].map(g => ({ group: g.label, items: [...g.children].map(o => o.value) }));
 const daysAgoSerial = n => { const d = new Date(); d.setDate(d.getDate() - n); return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5); };
 
-test('projects: Internal projects stay pinned at the top; the rest run from newest and most recently used, not grouped by client', withApp('/dashboard', async app => {
+test('projects: only the "Internal" project is pinned at the top; the rest run from newest and most recently used, not grouped by client', withApp('/dashboard', async app => {
   app.store.data.Tasks = [];                                // start from a known history
   const log = (project, daysAgo, worker = 'Demo User') => app.store.addRow('Tasks', { Date: daysAgoSerial(daysAgo), Project: project, Hours: 1, Task: 't', Worker: worker, Billable: true, Invoiced: false, Paid: false });
   await log('Feeder Study', 20); await log('Internal', 2); await log('Substation Upgrade', 0);
@@ -161,8 +161,8 @@ test('projects: Internal projects stay pinned at the top; the rest run from newe
   await app.store.loadAll(['Projects', 'Tasks']);
   await app.go('/time');
   const groups = projectOrder(app);
-  equal(groups[0], { group: 'Internal', items: ['Internal', 'Training'] }, 'Internal first, most recently used first within it');
-  equal(groups[1].items, ['Brand New', 'Hospital Generator', 'Substation Upgrade', 'Feeder Study'], 'then one list, newest and most recently used first');
+  equal(groups[0], { group: 'Pinned', items: ['Internal'] }, 'only the Internal project is pinned');
+  equal(groups[1].items, ['Brand New', 'Hospital Generator', 'Substation Upgrade', 'Feeder Study', 'Training'], 'then one list, newest and most recently used first; Training (an internal-type project) is not pinned');
   assert(!groups.some(g => /Northwind|Contoso/.test(g.group)), 'no client groups');
   equal(groups[2].items, ['Arc Flash Review'], 'opportunities stay in their own group at the end');
 }));
@@ -195,6 +195,18 @@ test('repeat: the drop-down holds up to 10 of my most used pairs', withApp('/das
   await app.go('/dashboard'); await app.go('/time');
   equal(chips(app).length, 10, 'ten pairs');
   assert(/task 1\b/.test(chips(app)[0].textContent), 'the most recent first among equals');
+}));
+
+test('repeat: quick add leaves out anything not used in the last 3 months, however often it was used before', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  const log = (task, daysAgo) => app.store.addRow('Tasks', { Date: daysAgoSerial(daysAgo), Project: 'Feeder Study', Hours: 1, Task: task, Worker: 'Demo User', Billable: true, Invoiced: false, Paid: false });
+  for (let i = 0; i < 6; i++) await log('old favourite', 100 + i);       // used a lot, but 3+ months ago
+  await log('recent once', 80);                                          // inside 3 months
+  await app.store.loadAll(['Projects', 'Tasks']);
+  await app.go('/dashboard'); await app.go('/time');
+  const labels = chips(app).map(c => c.textContent);
+  equal(labels.length, 1, `only the recent pair: ${labels}`);
+  assert(/recent once/.test(labels[0]));
 }));
 
 test('repeat: quick add lists my most used project and task pairs, most used first', withApp('/dashboard', async app => {
@@ -240,6 +252,20 @@ test('repeat: the Repeat button on a list row copies it into the form, dated tod
   const f = app.form().elements;
   equal([f.Project.value, f.Task.value, f.Hours.value, f.Date.value], ['Substation Upgrade', 'SLD revisions', '1.5', localISO()]);
   assert(/Log time/.test(app.$('#entry h2').textContent), 'still the new-entry form, not an edit');
+}));
+
+// ---- dashboard: no sideways scrolling ----
+test('dashboard: the "ready to invoice" card wraps long client names instead of scrolling sideways', withApp('/dashboard', async app => {
+  await app.store.addRow('Clients', { Name: 'Federal White Cement PO#047421 (Phase 3 Substation Expansion)', Contact: 'A', email: 'a@x.example', Phone: '1', Address: '1 Rd', Notes: '', Short: 'FWCA' });
+  await app.store.addRow('Projects', { Name: 'Long Client Job', ProjectID: 'FWC-009', Client: 'Federal White Cement PO#047421 (Phase 3 Substation Expansion)', Status: 'Active', Type: 'Hourly', Rate: 195 });
+  await app.store.addRow('Tasks', { Date: daysAgoSerial(2), Project: 'Long Client Job', Hours: 5, Task: 'work', Worker: 'Demo User', Billable: true, Invoiced: false, Paid: false });
+  await app.store.loadAll(['Clients', 'Projects', 'Tasks']);
+  await app.go('/time'); await app.go('/dashboard');
+  const card = [...app.$$('.card')].find(c => /Ready to invoice/.test(c.textContent));
+  assert(/Federal White Cement/.test(card.textContent), 'the long name is listed');
+  assert(card.scrollWidth <= card.clientWidth + 1, `no horizontal scroll: content ${card.scrollWidth}px in a ${card.clientWidth}px card`);
+  const btn = card.querySelector('.btn').getBoundingClientRect();
+  assert(btn.right <= card.getBoundingClientRect().right, 'the Invoice button is inside the card');
 }));
 
 // ---- fixed-fee budget on the Time form ----

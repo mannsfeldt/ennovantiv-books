@@ -57,6 +57,12 @@ window.BOOKS_CONFIG = {
   activeStatuses: ['Active', 'Active*'],
   opportunityStatuses: ['Opportunity', 'Hold'],
 
+  // Projects pinned at the top of the project list in Time (by name). Training and the
+  // other internal-type projects are not pinned; they are ordered by use like any other.
+  pinnedProjects: ['Internal'],
+  // Quick add offers only project + task pairs used within this many months, most used first.
+  quickAddMonths: 3,
+
   // Starting a new year (Settings → New year).
   rolloverKeepStatuses: ['Active', 'Active*', 'Opportunity', 'Hold'],   // projects carried into the new workbook
   // Tables emptied in the NEW workbook (never the current one). Clients, Workers, Categories and

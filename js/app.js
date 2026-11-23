@@ -1,7 +1,7 @@
-import { GraphStore } from './store-graph.js?v=2026112314';
-import { DemoStore } from './store-demo.js?v=2026112314';
-import { carryoverFor, planProjects, newFileName, carryoverChanges, round2 } from './rollover.js?v=2026112314';
-import { compressImage, readReceipt } from './receipt.js?v=2026112314';
+import { GraphStore } from './store-graph.js?v=2026112315';
+import { DemoStore } from './store-demo.js?v=2026112315';
+import { carryoverFor, planProjects, newFileName, carryoverChanges, round2 } from './rollover.js?v=2026112315';
+import { compressImage, readReceipt } from './receipt.js?v=2026112315';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -487,7 +487,7 @@ function viewDashboard(view) {
   view.innerHTML = `
     <div class="page-head"><h1>Hello${firstName(me || user.name) ? ', ' + esc(firstName(me || user.name)) : ''}</h1><p class="muted">${longDate(todayISO())}</p></div>
     ${yearNoteHTML(yr)}
-    ${books().filter(w => w.url !== CFG.fileShareUrl && w.open?.n).map(w => `<p class="infobar">Also unpaid in <b>${esc(bookLabel(w))}</b> (as of ${esc(longDate(w.open.at))}): ${w.open.n} ${w.open.n === 1 ? 'invoice' : 'invoices'} · ${money(w.open.total)}. <button type="button" class="btn sm" data-switch="${esc(w.id)}">Open ${esc(bookLabel(w))}</button></p>`).join('')}
+    ${books().filter(w => w.url !== CFG.fileShareUrl && w.open?.n).map(w => `<p class="infobar"><span>Also unpaid in <b>${esc(bookLabel(w))}</b> (as of ${esc(longDate(w.open.at))}): ${w.open.n} ${w.open.n === 1 ? 'invoice' : 'invoices'} · ${money(w.open.total)}.</span> <button type="button" class="btn sm" data-switch="${esc(w.id)}">Open ${esc(bookLabel(w))}</button></p>`).join('')}
     <div class="quick">
       <a class="btn primary" href="#/time">+ Time</a>
       <a class="btn primary" href="#/expenses/scan">Scan receipt</a>
@@ -508,7 +508,7 @@ function viewDashboard(view) {
     <div class="grid2">
       <div class="card">
         <h2>Ready to invoice by client</h2>
-        ${Object.keys(byClient).length ? `<table class="list"><tbody>${Object.entries(byClient).sort((a, b) => b[1] - a[1]).map(([c, v]) =>
+        ${Object.keys(byClient).length ? `<table class="list ready"><tbody>${Object.entries(byClient).sort((a, b) => b[1] - a[1]).map(([c, v]) =>
           `<tr><td>${esc(c)}</td><td class="r">${money(v)}</td><td class="r"><a class="btn sm" href="#/invoices/new" data-client="${esc(c)}">Invoice</a></td></tr>`).join('')}</tbody></table>`
           : '<p class="muted">Nothing waiting to be invoiced.</p>'}
       </div>
@@ -533,8 +533,9 @@ const isInternal = p => p?.Type === 'Internal';
 const isOpportunity = p => (cfg().opportunityStatuses || []).includes(p?.Status);
 // Internal and opportunity (pre-PO) work isn't billable by default
 const defaultBillable = p => !!p && !isInternal(p) && !isOpportunity(p);
-// Projects in the order you're likely to want them. Internal projects (Internal,
-// Training, …) are pinned at the top. Then new projects (the last few added to
+// Projects in the order you're likely to want them. The pinned project(s) named in
+// config (Internal) are at the top; Training and the other internal-type projects
+// are ordered by use like any other. Then new projects (the last few added to
 // the Projects table, not yet used by you), then the ones you've logged time on,
 // most recent first, then the rest, newest first. Opportunities and projects on
 // hold are listed separately at the end. Within each group the order is the same.
@@ -547,10 +548,11 @@ function projectOptions(all) {
   const rank = p => last[p.Name] ? [2, last[p.Name], p._row] : newest.has(p.Name) ? [3, p._row, 0] : [1, p._row, 0];
   const byRecent = (a, b) => { const x = rank(a), y = rank(b); return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]; };
   const ps = every.filter(p => all || open.includes(p.Status)).sort(byRecent);
+  const pinned = new Set(cfg().pinnedProjects || []);
   return [
-    { group: 'Internal', items: ps.filter(p => isInternal(p) && !isOpportunity(p)).map(p => p.Name) },
-    { group: 'Most recent first', items: ps.filter(p => !isInternal(p) && !isOpportunity(p)).map(p => p.Name) },
-    { group: 'Opportunities & on hold (not billable until PO)', items: ps.filter(p => isOpportunity(p) && !isInternal(p)).map(p => p.Name) },
+    { group: 'Pinned', items: ps.filter(p => pinned.has(p.Name)).map(p => p.Name) },
+    { group: 'Most recent first', items: ps.filter(p => !pinned.has(p.Name) && !isOpportunity(p)).map(p => p.Name) },
+    { group: 'Opportunities & on hold (not billable until PO)', items: ps.filter(p => !pinned.has(p.Name) && isOpportunity(p) && !isInternal(p)).map(p => p.Name) },
   ].filter(g => g.items.length);
 }
 const projectRow = name => rows('Projects').find(p => p.Name === name);
@@ -563,7 +565,9 @@ const distinct = (table, col, filter = () => true) => {
 // My most used project + task pairs from recent time, for quick entry. The hours
 // come from the latest time that pair was logged; closed projects are left out.
 function quickPairs() {
-  const recent = rows('Tasks').filter(t => t.Worker === me && clean(t.Task))
+  const since = new Date(); since.setMonth(since.getMonth() - (cfg().quickAddMonths || 3));
+  const cutoff = toSerial(new Date(since - since.getTimezoneOffset() * 6e4).toISOString().slice(0, 10));
+  const recent = rows('Tasks').filter(t => t.Worker === me && clean(t.Task) && num(t.Date) >= cutoff)     // recent and frequent only
     .sort((a, b) => num(b.Date) - num(a.Date) || b._row - a._row).slice(0, 150);
   const open = new Set(projectOptions(false).flatMap(g => g.items));
   const pairs = new Map();

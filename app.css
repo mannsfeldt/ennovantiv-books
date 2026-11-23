@@ -302,3 +302,19 @@ a.stat:hover { border-color: var(--blue); }
 .sw input:checked + i { border-color: var(--navy); box-shadow: 0 0 0 2px #fff inset; }
 .sw input:focus-visible + i { outline: 2px solid var(--navy); outline-offset: 2px; }
 .swdot { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: .4rem; }
+
+/* the dashboard's client list wraps long names rather than scrolling sideways */
+.card:has(> table.ready) { overflow-x: visible; }
+table.ready td:first-child { white-space: normal; color: var(--text); overflow-wrap: anywhere; }
+table.ready td.r { white-space: nowrap; }
+/* workbook list: colour swatches sit under the nickname, not beside it */
+.wb-list td:first-child { min-width: 11rem; }
+.wb-list input.nick { width: 100%; display: block; }
+.wb-list .swatches { display: flex; margin-top: .45rem; }
+.sw input { padding: 0; border: 0; }
+/* the workbook name in the top bar is never squeezed away on a phone; long nicknames get an ellipsis */
+button.filechip { flex: 0 0 auto; }
+.filechip .lbl { max-width: 7.5rem; white-space: nowrap; }
+.topbar .brandmark { min-width: 0; }
+.topbar { flex-wrap: wrap; row-gap: .4rem; }
+.topbar-right { margin-left: auto; }

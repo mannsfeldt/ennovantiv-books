@@ -98,7 +98,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 - **Who you are:** the app matches the signed-in person to the Workers table by sign-in address, then by name. If neither matches it asks once ("Who are you?") and remembers. Settings shows the match with a *Not you?* link.
 - **Shared change log:** **Settings → Shared change log** adds a `ChangeLog` sheet to the workbook. Every change made through the app (and every printed invoice or expense report) is then recorded there with who, when, what and where, and the dashboard shows it for everyone. It never delays a save; anything that couldn't be sent waits and goes with the next write.
 - **Dashboard:** *Last expense report* counts the days since a report was last printed or marked reimbursed. The hours-remaining panel on the Time form counts `Total + Overage` from the Projects table, so hours billed beyond the fee show as over budget.
-- **Time entry shortcuts:** *Quick add* is a single drop-down of your 10 most used project and task pairs (the latest hours come with it); a **Repeat** button on any row copies it into the form dated today. In the project list, Internal projects stay pinned at the top, then new and most recently used projects, not grouped by client.
+- **Time entry shortcuts:** *Quick add* is a single drop-down of your 10 most used project and task pairs from the last 3 months (the latest hours come with it; `quickAddMonths` in `js/config.js`); a **Repeat** button on any row copies it into the form dated today. In the project list only the project named *Internal* is pinned at the top (`pinnedProjects` in `js/config.js`); Training and the other internal-type projects are ordered by use like any other, as are new and recently used projects, not grouped by client.
 - **Safeguards on writes:**
   - A row that Excel accepted is always reported as saved, even if re-reading it fails, so a retry can't duplicate it. Add and delete are never replayed after a time-out.
   - Bulk updates (Invoiced, Paid, invoice numbers, Make billable, Mark reimbursed) re-read the table first and write nothing if rows were sorted, added or deleted meanwhile.
@@ -125,7 +125,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 
 ## Updating the app
 
-Each file is referenced with a version tag (`?v=2026112314` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
+Each file is referenced with a version tag (`?v=2026112315` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
 
 ## Tests
 

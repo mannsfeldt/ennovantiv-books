@@ -99,6 +99,30 @@ test('colour: pick one next to the nickname in Settings; it applies at once and 
   equal(JSON.parse(localStorage.getItem('books-demo:workbooks'))[0].color, 'magenta', 'saved on this device');
 }));
 
+const overlap = (a, b) => !(a.right <= b.left + 1 || b.right <= a.left + 1 || a.bottom <= b.top + 1 || b.bottom <= a.top + 1);
+
+test('colour: the swatches sit under the nickname and never cover the file name, the buttons or the nickname box', withApp('/settings', async app => {
+  await addWorkbook(app, 'demo://2027', '2027');          // two rows, as in real use
+  await app.go('/settings');
+  for (const row of app.$$('.wb-list tr')) {
+    const sw = row.querySelector('.swatches').getBoundingClientRect(), nick = row.querySelector('input.nick').getBoundingClientRect();
+    assert(!overlap(sw, nick), 'swatches do not cover the nickname box');
+    for (const other of [...row.querySelectorAll('td:not(:first-child) *')]) {
+      if (!other.getClientRects().length || other.children.length) continue;       // leaf elements only: the text and the buttons
+      assert(!overlap(sw, other.getBoundingClientRect()), `swatches cover "${other.textContent.trim().slice(0, 30)}"`);
+    }
+    assert(sw.right <= row.querySelector('td').getBoundingClientRect().right + 1, 'swatches stay inside their own cell');
+  }
+}));
+
+test('phone: the workbook name in the top bar stays readable at phone width, and the header does not overflow', withApp('/dashboard', async app => {
+  await addWorkbook(app, 'demo://2027', 'Year 2027');
+  const lbl = app.$('#filechip .lbl');
+  assert(lbl.getBoundingClientRect().width >= 30, `the label has room: ${lbl.getBoundingClientRect().width}px`);
+  assert(lbl.scrollWidth <= lbl.clientWidth + 1 || lbl.getBoundingClientRect().width >= 60, 'and is not squeezed to a sliver');
+  assert(app.doc.documentElement.scrollWidth <= 375, `no sideways scrolling: ${app.doc.documentElement.scrollWidth}px`);
+}, '', 375));
+
 test('colour: the palette has no red or green (the brand reserves them for electrical safety)', withApp('/settings', async app => {
   const colours = app.$$('.wb-list tr:first-child .sw i').map(i => app.win.getComputedStyle(i).backgroundColor);
   assert(colours.length >= 5, `swatches shown: ${colours.length}`);

@@ -3,11 +3,11 @@
 import { test, assert, equal, until, sleep } from './harness.js';
 
 // A fresh copy of the app for each test, so sample data never leaks between tests.
-export async function openApp(hash = '/dashboard', query = '') {
+export async function openApp(hash = '/dashboard', query = '', width = 1200) {
   // the demo keeps its own saved values (books-demo:…), so each test starts from a clean slate
   for (const k of Object.keys(localStorage)) if (k.startsWith('books-demo:')) localStorage.removeItem(k);
   const frame = document.createElement('iframe');
-  frame.style.cssText = 'width:1200px;height:900px;border:0;position:absolute;left:-9999px;top:0';
+  frame.style.cssText = `width:${width}px;height:900px;border:0;position:absolute;left:-9999px;top:0`;
   frame.src = `../index.html?demo&t=${Date.now()}${query}#${hash}`;
   document.body.appendChild(frame);
   const win = await until(() => frame.contentWindow?.demoStore?.tables?.Tasks && frame.contentDocument.querySelector('#view')?.children.length && frame.contentWindow, 10000, 'the app to load');
@@ -40,7 +40,7 @@ export async function openApp(hash = '/dashboard', query = '') {
   return app;
 }
 // run a test with an app that is always cleaned up
-export const withApp = (hash, fn, query = '') => async () => { const app = await openApp(hash, query); try { await fn(app); } finally { app.close(); } };
+export const withApp = (hash, fn, query = '', width = 1200) => async () => { const app = await openApp(hash, query, width); try { await fn(app); } finally { app.close(); } };
 const asUser = (name, email) => `&as=${encodeURIComponent(name)}&email=${encodeURIComponent(email)}`;
 
 test('app: logging time adds one row to the Tasks table', withApp('/time', async app => {
