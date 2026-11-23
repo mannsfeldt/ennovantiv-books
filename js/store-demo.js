@@ -1,6 +1,6 @@
 // In-memory store with made-up sample data, same interface as GraphStore.
 // Lets you try the app (?demo) without Microsoft sign-in. Nothing is saved.
-import { parseTable, rowAddress } from './store-graph.js?v=2026112312';
+import { parseTable, rowAddress } from './store-graph.js?v=2026112313';
 
 const today = new Date();
 const serial = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
@@ -82,6 +82,7 @@ function seed() {
 }
 
 export class DemoStore {
+  static files = new Map();   // workbooks made by "copy" (the new-year setup), by file name
   constructor(cfg, schema) { this.cfg = cfg; this.schema = schema; this.tables = {}; this.data = seed(); }
   // ?as=Name&email=… lets the tests (and a demo) sign in as someone else
   async init() {
@@ -92,6 +93,14 @@ export class DemoStore {
   // 'demo://2027' opens a second, empty-ish demo workbook so switching can be tried
   async openFile(url = '') {
     if (/fail/.test(url)) throw new Error('Demo: that workbook cannot be opened');
+    if (url.startsWith('demo://file/')) {            // a workbook made by the new-year setup
+      const name = decodeURIComponent(url.slice('demo://file/'.length)), f = DemoStore.files.get(name);
+      if (!f) throw new Error('Demo: that workbook cannot be opened');
+      this.data = f.data; this.tables = {};
+      this.file = { name, webUrl: url, driveId: 'demo', itemId: 'demo-file-' + name };
+      this.cfg = { ...this.cfg, companyName: 'Your Company Inc.', taxNumber: '000000000-RT0001', allowedUsers: [] };
+      return this.file;
+    }
     const year = (/(20\d\d)/.exec(url) || [])[1];
     const other = year && year !== '2026' && year !== String(new Date().getFullYear());
     this.data = seed();                 // the demo's ChangeLog table does not exist until Settings adds it
@@ -137,7 +146,19 @@ export class DemoStore {
   }
   async loadAll(names) { for (const n of names) await this.loadTable(n); }
 
+  // Same contract as GraphStore: a row with nothing typed into it (formula columns don't count)
+  isBlank(name, row) {
+    const comp = this.schema[name]?.computed || [];
+    return HEAD[name].every((h, i) => comp.includes(h) || row._raw[i] === '' || row._raw[i] == null);
+  }
   async addRow(name, obj) {
+    const rowsNow = this.data[name];
+    if (rowsNow.length === 1 && this.isBlank(name, { _raw: HEAD[name].map((_, i) => rowsNow[0][i] ?? '') })) {
+      HEAD[name].forEach((h, i) => { if (h in obj && obj[h] !== null) rowsNow[0][i] = obj[h]; });   // fill the blank row Excel leaves
+      await this.loadTable(name);
+      const t = this.tables[name];
+      return { sheet: t.sheet, row: t.startRow + 1, address: `${t.sheet}!${rowAddress(t, t.startRow + 1)} (demo)` };
+    }
     this.data[name].push(HEAD[name].map(h => (h in obj && obj[h] !== null ? obj[h] : '')));
     const old = this.tables[name], rowNum = this.data[name].length + 1;   // same contract as GraphStore.addRow
     const out = { sheet: old.sheet, row: rowNum, address: `${old.sheet}!${rowAddress(old, rowNum)} (demo)` };
@@ -180,6 +201,33 @@ export class DemoStore {
   async createTable(name, sheet, headers) {
     HEAD[name] = headers; SHEET[name] = sheet; this.data[name] = [];
     return this.loadTable(name);
+  }
+  // ---- starting a new year ----
+  async copyFile(newName) {
+    if (newName === this.file.name || DemoStore.files.has(newName)) throw Object.assign(new Error(`A file named "${newName}" already exists in that folder.`), { exists: true });
+    DemoStore.files.set(newName, { data: structuredClone(this.data) });
+    return { id: 'demo-file-' + newName, name: newName, webUrl: 'demo://file/' + encodeURIComponent(newName), parentReference: { driveId: 'demo', id: 'folder' } };
+  }
+  async openItem(item) {
+    const f = DemoStore.files.get(item.name);
+    if (!f) throw new Error('Demo: that workbook cannot be opened');
+    const s = new DemoStore(this.cfg, this.schema);
+    s.data = f.data; s.tables = {};
+    s.file = { name: item.name, webUrl: item.webUrl, driveId: 'demo', itemId: item.id };
+    return s;
+  }
+  openByUrl(url) {
+    const name = decodeURIComponent(String(url).replace('demo://file/', ''));
+    return this.openItem({ id: 'demo-file-' + name, name, webUrl: url });
+  }
+  async clearTable(name, { expectItemId } = {}) {
+    if (!expectItemId || this.file.itemId !== expectItemId) throw new Error('Refusing to empty a table: this is not the workbook that was just created.');
+    if (globalThis.__demoFault === 'clearTable') { globalThis.__demoFault = ''; throw new Error('Demo: the connection dropped'); }   // lets a test interrupt the setup
+    const t = await this.loadTable(name);
+    if (t.rows.every(r => this.isBlank(name, r))) return 0;
+    this.data[name] = [HEAD[name].map(() => '')];
+    await this.loadTable(name);
+    return t.rows.length;
   }
   async addRows(name, rowsToAdd) { this.data[name].push(...rowsToAdd.map(r => [...r])); }
   async readRange(ref) { return RANGES[ref] || []; }

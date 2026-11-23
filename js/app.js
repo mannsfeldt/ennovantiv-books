@@ -1,6 +1,7 @@
-import { GraphStore } from './store-graph.js?v=2026112312';
-import { DemoStore } from './store-demo.js?v=2026112312';
-import { compressImage, readReceipt } from './receipt.js?v=2026112312';
+import { GraphStore } from './store-graph.js?v=2026112313';
+import { DemoStore } from './store-demo.js?v=2026112313';
+import { carryoverFor, planProjects, newFileName, carryoverChanges, round2 } from './rollover.js?v=2026112313';
+import { compressImage, readReceipt } from './receipt.js?v=2026112313';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -27,7 +28,13 @@ const ls = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(PREFIX + k)) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)); } catch {} },
 };
-const rows = name => (store.tables[name]?.rows || []).filter(r => r._raw.some(v => v !== '' && v !== null));
+const rows = name => {
+  const t = store.tables[name];
+  if (!t) return [];
+  const computed = SCHEMA[name]?.computed || [];
+  const typed = t.headers.map((h, i) => computed.includes(h) ? -1 : i).filter(i => i >= 0);
+  return t.rows.filter(r => typed.some(i => r._raw[i] !== '' && r._raw[i] !== null));
+};
 const clean = s => String(s || '').trim();
 
 // ---------- app state ----------
@@ -51,11 +58,11 @@ function toast(msg, kind = 'ok', ms = 4500) {
 // added the ChangeLog table) a shared list in the workbook that everyone sees.
 // The shared write is best effort: it never delays or fails a save. Rows that
 // couldn't be sent wait in a queue on the device and go with the next write.
-function logActivity(action, address, detail = '') {
+function logActivity(action, address, detail = '', { shared = true } = {}) {
   const log = ls.get('log', []);
   log.unshift({ when: new Date().toISOString(), action, address, detail });
   ls.set('log', log.slice(0, 100));
-  if (store.file && store.tables.ChangeLog) {
+  if (shared && store.file && store.tables.ChangeLog) {
     const q = ls.get('logQueue', []);
     q.push({ id: Date.now() + Math.random(), wb: CFG.fileShareUrl, row: [stamp(), me || user?.name || '', action, address || '', detail || ''] });
     ls.set('logQueue', q);
@@ -435,7 +442,7 @@ function yearNoteHTML(yr) {
   const wy = workbookYear();
   if (!wy || wy === yr) return '';
   const target = books().find(w => fileYear(w.name) === yr && w.url !== CFG.fileShareUrl);
-  const go = target ? `<button type="button" class="btn sm" data-switch="${esc(target.id)}">Switch to ${esc(bookLabel(target))}</button>` : `<a href="#/settings">Add the ${yr} workbook in Settings</a>`;
+  const go = target ? `<button type="button" class="btn sm" data-switch="${esc(target.id)}">Switch to ${esc(bookLabel(target))}</button>` : `<a href="#/settings">Set up the ${yr} workbook in Settings</a>`;
   return Number(wy) < Number(yr)
     ? `<p class="warnbox">This is the <b>${wy} workbook</b> (${esc(store.file.name)}), and it is now ${yr}. That is right for finishing ${wy}: invoicing and payments for ${wy} work. New time and expenses belong in ${yr}. ${go}</p>`
     : `<p class="warnbox">This is the <b>${wy} workbook</b> (${esc(store.file.name)}), but it is still ${yr}. ${go}</p>`;
@@ -1855,6 +1862,193 @@ function wireInvoiceCheck(view) {
 // =====================================================================
 // Settings
 // =====================================================================
+// =====================================================================
+// New year: copy this workbook to next year's, empty the year's records, and
+// carry each fixed-fee project's spend into its Carryover. Only the NEW file is
+// ever written to; this one is read.
+// =====================================================================
+const ROLL = 'rollover';
+
+function rolloverCard() {
+  const fy = workbookYear();
+  if (!/^20\d\d$/.test(fy || '')) return '';
+  const ty = String(Number(fy) + 1), j = ls.get(ROLL, null);
+  const next = books().find(w => fileYear(w.name) === ty && w.url !== CFG.fileShareUrl);
+  let body;
+  if (j) body = `<p class="warnbox small"><b>${esc(j.name)} is only partly set up.</b> It was started ${esc(new Date(j.when).toLocaleString('en-CA'))}. ${j.sourceUrl === CFG.fileShareUrl ? 'Nothing is lost: continue to finish it, on the same file.' : 'Switch back to the workbook it was started from to continue.'}</p>
+      <div class="actions">${j.sourceUrl === CFG.fileShareUrl ? '<button class="btn primary" id="resumeroll">Continue</button>' : ''}<button class="btn" id="discardroll">Discard…</button></div>`;
+  else if (next) body = `<p class="small muted">You have the ${ty} workbook (<b>${esc(bookLabel(next))}</b>). Once you have recorded January's invoice for ${fy} work in this workbook, update its project carryover so it includes that invoice. Only projects whose carryover changed are touched.</p>
+      <div class="actions"><button class="btn primary" id="updcarry" data-id="${esc(next.id)}">Update carryover in ${esc(bookLabel(next))}…</button></div>`;
+  else body = `<p class="small muted">Makes ${ty}'s workbook from this one: a copy named <b>${esc(newFileName(store.file.name, ty))}</b> in the same folder, with the year's records emptied and each fixed-fee project's carryover set. <b>This workbook is not changed.</b></p>
+      <div class="actions"><button class="btn primary" id="startroll">Set up the ${ty} workbook…</button></div>`;
+  return `<div class="card" id="rollcard" style="margin-top:1rem"><h2>New year</h2>${body}</div>`;
+}
+
+function wireRollover(view) {
+  if ($('#startroll', view)) $('#startroll', view).onclick = () => startRollover(view);
+  if ($('#resumeroll', view)) $('#resumeroll', view).onclick = () => runRollover(ls.get(ROLL, null), view);
+  if ($('#discardroll', view)) $('#discardroll', view).onclick = () => {
+    const j = ls.get(ROLL, null);
+    if (!confirm(`Stop tracking the unfinished ${j.name}?\n\nThe file stays in SharePoint exactly as it is. Delete it there if you don't want it, or finish setting it up by hand.`)) return;
+    ls.set(ROLL, null); viewSettings(view);
+  };
+  if ($('#updcarry', view)) $('#updcarry', view).onclick = () => updateCarryover(view, books().find(w => w.id === $('#updcarry', view).dataset.id));
+}
+
+const checklistHTML = (from, to) => `<ul class="small tight">${(cfg().rolloverChecklist || []).map(t => `<li>${esc(t.replaceAll('{from}', from).replaceAll('{to}', to))}</li>`).join('')}</ul>`;
+
+async function startRollover(view) {
+  const fy = workbookYear(), ty = String(Number(fy) + 1), name = newFileName(store.file.name, ty);
+  const names = cfg().rolloverClear || [];
+  await busy('Reading this workbook…', async () => {
+    await store.loadAll(['Projects']);
+    await Promise.allSettled(names.map(n => store.loadTable(n)));      // the ones this workbook doesn't have are skipped
+  });
+  const projects = planProjects(rows('Projects'), cfg().rolloverKeepStatuses || []);
+  const tables = names.filter(n => store.tables[n]).map(n => ({ name: n, count: rows(n).length }));
+  const data = await modal(`
+    <h2>Set up the ${esc(ty)} workbook</h2>
+    <p class="small">A copy of <b>${esc(store.file.name)}</b> will be made in the same folder as <b>${esc(name)}</b>, then emptied and set up. <b>${esc(store.file.name)} is not changed.</b> Everything below happens in the new copy.</p>
+    <h3 class="group-h">Projects carried over</h3>
+    <div class="scroll"><table class="list"><thead><tr><th></th><th>Project</th><th>Status</th><th class="r">Fee</th><th class="r">Spent in ${esc(fy)}</th><th class="r">Carryover</th></tr></thead><tbody>
+    ${projects.map(p => `<tr><td><input type="checkbox" name="proj" value="${esc(p.name)}" ${p.include ? 'checked' : ''} aria-label="Carry over ${esc(p.name)}"></td>
+      <td><b>${esc(p.name)}</b><br><small class="muted">${esc(p.id)} · ${esc(p.client)} · ${esc(p.type)}</small></td><td>${esc(p.status)}</td>
+      <td class="r">${p.fee ? money(p.fee) : '—'}</td><td class="r">${p.type === 'Fixed Fee' ? money(p.spent) : '—'}</td><td class="r" data-carry="${esc(p.name)}">${p.carryover === '' ? '—' : money(p.carryover)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="small muted">Carryover is what a fixed-fee project has already used (billed, plus billable time not yet invoiced, plus anything billed beyond the fee), so ${esc(ty)}'s previously billed, % complete and hours remaining pick up where ${esc(fy)} left off. Untick a project to leave it behind.</p>
+    <h3 class="group-h">Emptied in the new workbook</h3>
+    <div class="checks">${tables.map(t => `<label class="check"><input type="checkbox" name="clr" value="${esc(t.name)}" checked> ${esc(t.name)} <small class="muted">(${t.count} ${t.count === 1 ? 'row' : 'rows'})</small></label>`).join('')}</div>
+    <p class="small muted">Clients, Workers, Categories and the status and type lists are kept as they are.</p>
+    <h3 class="group-h">Then update by hand in Excel</h3>
+    ${checklistHTML(fy, ty)}
+    <label class="check"><input type="checkbox" name="ok" required> I understand this makes a new file and leaves ${esc(store.file.name)} unchanged</label>
+    <div class="actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Create ${esc(name)}</button></div>`, 'wide');
+  if (!data) return;
+  const chosen = new Set(data.getAll('proj'));
+  await runRollover({
+    toYear: ty, name, sourceName: store.file.name, sourceUrl: CFG.fileShareUrl, sourceItemId: store.file.itemId,
+    fromYear: fy, projects: projects.map(p => ({ ...p, include: chosen.has(p.name) })), clear: data.getAll('clr'),
+    item: null, when: new Date().toISOString(),
+  }, view);
+}
+
+async function runRollover(j, view) {
+  if (!j) return;
+  if (j.sourceUrl !== CFG.fileShareUrl) return toast('This setup was started from another workbook. Switch back to it to continue.', 'warn');
+  ls.set(ROLL, j);                                   // remembered until every step is done, so it can be resumed
+  let report;
+  try { report = await busy(`Setting up ${j.name}…`, () => doRollover(j)); }
+  catch (e) {
+    if (!ls.get(ROLL, null)) return viewSettings(view);      // stopped before anything was made: nothing to resume
+    toast(`<b>${esc(j.name)} is only partly set up.</b> Nothing is lost: press <b>Continue</b> under Settings → New year to finish it.`, 'warn', 20000);
+    return viewSettings(view);
+  }
+  const entry = books().find(w => w.itemId === j.item.id);
+  const data = await modal(`
+    <h2>${esc(j.name)} is ready</h2>
+    <p class="small">Made from ${esc(j.sourceName)}, which was not changed. It is in your workbook list as <b>${esc(bookLabel(entry))}</b>.</p>
+    <ul class="small tight">
+      <li>${report.projects} projects carried over${report.dropped ? `, ${report.dropped} left behind` : ''}; carryover set on ${report.carryover}.</li>
+      <li>Emptied: ${Object.entries(report.cleared).map(([n, c]) => `${esc(n)} (${c})`).join(', ') || 'nothing'}.</li>
+    </ul>
+    <h3 class="group-h">Now update by hand in ${esc(j.name)}</h3>
+    ${checklistHTML(j.fromYear, j.toYear)}
+    <h3 class="group-h">Other devices</h3>
+    <p class="small muted">On each other phone or computer: Settings → Add a workbook, and paste this link.</p>
+    <div class="field"><input readonly value="${esc(j.item.webUrl)}" onfocus="this.select()" aria-label="Link to ${esc(j.name)}"></div>
+    <label class="check"><input type="checkbox" name="switch" checked> Switch to ${esc(bookLabel(entry))} now</label>
+    <div class="actions"><button class="btn primary" value="ok">Done</button></div>`, 'wide');
+  if (data?.get('switch')) return switchBook(entry.id);
+  viewSettings(view);
+}
+
+// Every step can be repeated safely, so a setup that was interrupted can be continued.
+async function doRollover(j) {
+  const say = t => { const b = $('#busy span'); if (b) b.textContent = t; };
+  if (!j.item) {
+    say(`Copying ${j.sourceName}…`);
+    try { j.item = await store.copyFile(j.name); }
+    catch (e) {
+      if (e.exists) { ls.set(ROLL, null); throw new Error(`A file named "${j.name}" already exists in that folder, so nothing was changed. Rename or delete it in SharePoint, or add it under Settings → Workbooks.`); }
+      throw e;
+    }
+    ls.set(ROLL, j);
+  }
+  const tgt = await store.openItem(j.item);
+  // the safety rail: never write to anything but the file we just made
+  if (tgt.file.itemId !== j.item.id || tgt.file.itemId === store.file.itemId || tgt.file.itemId === j.sourceItemId) throw new Error('The new workbook is the same file as this one, so setup stopped before changing anything.');
+  const expect = j.item.id, cleared = {};
+  for (const n of j.clear) { say(`Emptying ${n}…`); cleared[n] = await tgt.clearTable(n, { expectItemId: expect }); }
+
+  say('Removing projects that are not carried over…');
+  const drop = new Set(j.projects.filter(p => !p.include).map(p => p.name));
+  for (let guard = 0; drop.size && guard < 200; guard++) {
+    const t = await tgt.loadTable('Projects');
+    const r = [...t.rows].reverse().find(x => drop.has(x.Name));
+    if (!r) break;
+    await tgt.deleteRow('Projects', r);
+  }
+
+  say('Setting each project\'s carryover…');
+  const t = await tgt.loadTable('Projects');
+  const items = [];
+  for (const p of j.projects.filter(x => x.include)) {
+    const r = t.rows.find(x => x.Name === p.name);
+    if (!r) continue;
+    const have = r.Carryover === '' || r.Carryover == null ? '' : round2(Number(r.Carryover) || 0);
+    if (have !== p.carryover) items.push({ row: r, value: p.carryover });
+  }
+  if (items.length) await tgt.setCells('Projects', 'Carryover', items);
+
+  say('Checking the new workbook…');
+  for (const n of j.clear) {
+    const left = (await tgt.loadTable(n)).rows.filter(r => !tgt.isBlank(n, r)).length;
+    if (left) throw new Error(`${n} still has ${left} rows in the new workbook after emptying it.`);
+  }
+  const kept = (await tgt.loadTable('Projects')).rows.filter(r => !tgt.isBlank('Projects', r)).length;
+  if (tgt.tables.ChangeLog) {      // the new workbook's own log starts with where it came from
+    try { await tgt.addRow('ChangeLog', { When: stamp(), Who: me || user?.name || '', Action: 'Workbook set up', Where: j.name, Detail: `copied from ${j.sourceName}` }); } catch {}
+  }
+
+  const list = books();
+  if (!list.some(w => w.itemId === j.item.id || w.url === j.item.webUrl)) {
+    list.push({ id: 'wb' + Date.now().toString(36), nickname: j.toYear, color: nextColor(list), url: j.item.webUrl, name: j.item.name, itemId: j.item.id, receiptFolder: 'Receipts/' + j.toYear, lastUsed: new Date().toISOString(), open: { n: 0, total: 0, at: todayISO() } });
+    saveBooks(list);
+  }
+  logActivity('Set up new year workbook', j.name, `from ${j.sourceName}`, { shared: false });
+  ls.set(ROLL, null);
+  return { cleared, projects: kept, dropped: drop.size, carryover: items.length };
+}
+
+// After January's invoice is recorded here, bring the new workbook's carryover up to date.
+async function updateCarryover(view, target) {
+  if (!target) return;
+  let other, found;
+  await busy(`Reading ${bookLabel(target)}…`, async () => {
+    await store.loadAll(['Projects']);
+    other = await store.openByUrl(target.url);
+    if (other.file.itemId === store.file.itemId) throw new Error('That is this same workbook.');
+    const t = await other.loadTable('Projects');
+    found = carryoverChanges(rows('Projects'), t.rows.filter(r => !other.isBlank('Projects', r)));
+  });
+  const { changes, missing } = found;
+  if (!changes.length) return toast(`Carryover in <b>${esc(bookLabel(target))}</b> is already up to date.${missing.length ? ` (${missing.map(esc).join(', ')} ${missing.length === 1 ? 'is' : 'are'} not in it.)` : ''}`, 'info', 6000);
+  const data = await modal(`
+    <h2>Update carryover in ${esc(bookLabel(target))}</h2>
+    <p class="small muted">From this workbook's Projects table (billed + not yet invoiced + beyond the fee). Only these projects change; nothing else in ${esc(target.name)} is touched.</p>
+    <div class="scroll"><table class="list"><thead><tr><th>Project</th><th class="r">Now</th><th class="r">New</th></tr></thead><tbody>
+      ${changes.map(c => `<tr><td><b>${esc(c.name)}</b></td><td class="r">${c.from === '' ? '—' : money(c.from)}</td><td class="r">${money(c.to)}</td></tr>`).join('')}
+    </tbody></table></div>
+    ${missing.length ? `<p class="small muted">Not in ${esc(bookLabel(target))}, so left alone: ${missing.map(esc).join(', ')}.</p>` : ''}
+    <label class="check"><input type="checkbox" name="ok" required> Update these ${changes.length} ${changes.length === 1 ? 'project' : 'projects'}</label>
+    <div class="actions"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Update</button></div>`, 'wide');
+  if (!data) return;
+  await busy('Updating carryover…', () => other.setCells('Projects', 'Carryover', changes.map(c => ({ row: c.row, value: c.to }))));
+  logActivity('Updated carryover', target.name, `${changes.length} projects`, { shared: false });
+  toast(`Updated carryover on ${changes.length} ${changes.length === 1 ? 'project' : 'projects'} in <b>${esc(bookLabel(target))}</b>.`, 'ok', 7000);
+  viewSettings(view);
+}
+
 function trackingCard() {
   const name = cfg().invoiceLinkColumn;
   const tables = ['Tasks', 'Disbursements'];
@@ -1939,8 +2133,9 @@ function viewSettings(view) {
         </ul>
       </div>
     </div>
-    ${store.file ? trackingCard() + logCard() : ''}`;
+    ${store.file ? trackingCard() + logCard() + rolloverCard() : ''}`;
   wireTracking(view);
+  wireRollover(view);
   if ($('#addlog')) $('#addlog').onclick = async () => {
     if (!confirm('Excel will add a new sheet named "ChangeLog" with a table of the same name (When, Who, Action, Where, Detail) to this workbook. Nothing else in the workbook changes.\n\nAdd it?')) return;
     await busy('Adding the change log…', () => store.createTable('ChangeLog', 'ChangeLog', ['When', 'Who', 'Action', 'Where', 'Detail']));

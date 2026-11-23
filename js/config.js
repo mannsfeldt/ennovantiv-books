@@ -57,6 +57,23 @@ window.BOOKS_CONFIG = {
   activeStatuses: ['Active', 'Active*'],
   opportunityStatuses: ['Opportunity', 'Hold'],
 
+  // Starting a new year (Settings → New year).
+  rolloverKeepStatuses: ['Active', 'Active*', 'Opportunity', 'Hold'],   // projects carried into the new workbook
+  // Tables emptied in the NEW workbook (never the current one). Clients, Workers, Categories and
+  // the Status / Type lists are kept. A table that doesn't exist is skipped.
+  rolloverClear: ['Tasks', 'Expenses', 'Mileage', 'Invoices', 'Disbursements', 'Payroll', 'Sales', 'MainAct', 'TaxAct', 'Visa', 'ChangeLog'],
+  // Cells tied to the year that are typed in by hand, so the app lists them rather than changing them.
+  // {from} and {to} become the two years.
+  rolloverChecklist: [
+    'Calendar!A1: the year start date',
+    'Calendar!B25 and B26: opening bank balances (typed into the formulas)',
+    'Mileage!Q2 and R2: the year start date and the odometer reading on 1 January',
+    'Mileage!R21:R26 (the "{from} Rate" heading and the per diem rates) and T7:V8 (the km rates)',
+    'Weekly!B2: the date the weekly grid starts',
+    'Payroll!R12:R21: the remittance dates, and the dated notes in column U',
+    'Search the workbook for "{from}" to catch anything else',
+  ],
+
   // Expense report: per diem rates and mileage allowance rates are read from
   // these cells on the Mileage sheet, so updating the sheet updates the report.
   perDiemRange: 'Mileage!Q22:R26',      // label, rate: Breakfast … Private Acc
@@ -72,6 +89,11 @@ window.BOOKS_SCHEMA = {
   Mileage:       { computed: [] },
   Invoices:      { computed: ['Tax', 'Due Date', 'Days'] },
   Disbursements: { computed: ['Markup  $', 'Billable'] },
+  Payroll:       { computed: ['Net', 'Remittance', 'Total'] },
+  Sales:         { computed: ['Tax'] },
+  MainAct:       { computed: ['Date'] },
+  TaxAct:        { computed: ['Date'] },
+  Visa:          { computed: ['Date'] },
   Projects:      { computed: ['%Comp', 'Hours', 'This Invoice', 'Billed', 'Total', 'Remaining', 'Overage', 'Total Hours', 'Short'] },
   Status:        { readOnly: true },
   Table12:       { readOnly: true }, // project Types
