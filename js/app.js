@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112304';
-import { DemoStore } from './store-demo.js?v=2026112304';
-import { compressImage, readReceipt } from './receipt.js?v=2026112304';
+import { GraphStore } from './store-graph.js?v=2026112305';
+import { DemoStore } from './store-demo.js?v=2026112305';
+import { compressImage, readReceipt } from './receipt.js?v=2026112305';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -401,6 +401,20 @@ const weekday = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-CA', {
 // =====================================================================
 // Dashboard
 // =====================================================================
+// When was an expense report last filed? Printing one, or marking one reimbursed,
+// both count; whichever is most recent. Uses the shared log when there is one,
+// plus this device's own log.
+function lastExpenseReport() {
+  const acts = new Set(['Printed expense report', 'Expense report reimbursed']);
+  let best = null;
+  const consider = (when, who) => { if (when && !isNaN(when) && (!best || when > best.when)) best = { when, who }; };
+  if (store.tables.ChangeLog) for (const r of rows('ChangeLog')) if (acts.has(r.Action)) consider(new Date(String(r.When).replace(' ', 'T')), r.Who);
+  for (const l of ls.get('log', [])) if (acts.has(l.action)) consider(new Date(l.when), me);
+  if (!best) return null;
+  const iso = new Date(best.when - best.when.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+  return { ...best, iso, days: toSerial(todayISO()) - toSerial(iso) };
+}
+
 function viewDashboard(view) {
   const yr = todayISO().slice(0, 4), mo = todayISO().slice(0, 7);
   const own = cfg().companyClientRow;
@@ -438,6 +452,8 @@ function viewDashboard(view) {
       <div class="stat"><label>Receivables</label><b>${money(open.reduce((s, i) => s + num(i.Amount), 0))}</b><small>${open.length} open · ${overdue.length} overdue</small></div>
       <div class="stat"><label>Hours this month</label><b>${hrs(myHrs)}</b><small>${hrs(allHrs)} for all workers</small></div>
       <div class="stat"><label>Expenses ${yr}</label><b>${money(expTot)}</b><small>business portion, incl. HST</small></div>
+      ${(() => { const r = lastExpenseReport();
+        return `<a class="stat" href="#/report"><label>Last expense report</label><b>${r ? (r.days === 0 ? 'Today' : `${r.days} ${r.days === 1 ? 'day' : 'days'}`) : '—'}</b><small>${r ? `${longDate(r.iso)}${r.who ? ' · ' + esc(r.who) : ''}` : 'none on record yet'}</small></a>`; })()}
       <div class="stat"><label>Business km ${yr}</label><b>${num(kmYr).toLocaleString('en-CA')}</b><small>${rows('Mileage').filter(m => toISO(m.Date).startsWith(yr)).length} trips</small></div>
     </div>
     <div class="grid2">

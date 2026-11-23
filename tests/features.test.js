@@ -110,3 +110,40 @@ test('log: the dashboard shows what other people changed', withApp('/settings', 
 test('log: without the table the dashboard says how to turn the shared log on', withApp('/dashboard', async app => {
   assert(/shared change log/i.test(app.$('#view').textContent), 'hint shown');
 }));
+
+// ---- dashboard: days since the last expense report ----
+const daysAgoStamp = n => { const d = new Date(); d.setDate(d.getDate() - n); return `${localISO(d)} 09:00`; };
+const reportTile = app => [...app.$$('.stat')].find(t => /expense report/i.test(t.querySelector('label')?.textContent || ''));
+async function withLog(app, rowsToAdd) {
+  await enableLog(app);
+  for (const r of rowsToAdd) app.store.data.ChangeLog.push(r);
+  await app.store.loadTable('ChangeLog');
+  await app.go('/dashboard');
+}
+
+test('report days: the dashboard counts the days since the last expense report', withApp('/settings', async app => {
+  await withLog(app, [[daysAgoStamp(10), 'Shari Mannsfeldt', 'Printed expense report', '', 'Shari · 2026-01-01 to 2026-11-13 · $120.00']]);
+  const t = reportTile(app);
+  assert(t, 'a tile for it');
+  assert(/10 days/.test(t.textContent), `says 10 days: ${t.textContent}`);
+  assert(/Shari/.test(t.textContent), 'and who filed it');
+}));
+
+test('report days: the most recent of printing and marking reimbursed counts', withApp('/settings', async app => {
+  await withLog(app, [
+    [daysAgoStamp(10), 'David', 'Printed expense report', '', ''],
+    [daysAgoStamp(3), 'David', 'Expense report reimbursed', 'Expenses ×4, Mileage ×2', 'David · $400.00'],
+  ]);
+  assert(/3 days/.test(reportTile(app).textContent), reportTile(app).textContent);
+}));
+
+test('report days: says so when no report has been filed yet', withApp('/dashboard', async app => {
+  assert(/none on record/i.test(reportTile(app).textContent), reportTile(app).textContent);
+}));
+
+test('report days: printing a report starts the count again from today (even without the shared log)', withApp('/report', async app => {
+  await until(() => app.$('#r-print'), 5000, 'the print button');
+  app.$('#r-print').click(); await sleep(100);
+  await app.go('/dashboard');
+  assert(/today/i.test(reportTile(app).textContent), reportTile(app).textContent);
+}));

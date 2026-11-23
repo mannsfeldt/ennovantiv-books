@@ -280,3 +280,5 @@ button.filechip { background: none; font: inherit; font-size: .82rem; cursor: po
 .wbmenu button.cur { background: #E8EEFA; }
 .wbmenu hr { border: 0; border-top: 1px solid var(--line); margin: .3rem 0; }
 .wb-list input.nick { min-height: 36px; padding: .3rem .5rem; font-size: 14px; }
+a.stat { text-decoration: none; color: inherit; }
+a.stat:hover { border-color: var(--blue); }
