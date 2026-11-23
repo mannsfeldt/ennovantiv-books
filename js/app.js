@@ -1,7 +1,7 @@
-import { GraphStore } from './store-graph.js?v=2026112313';
-import { DemoStore } from './store-demo.js?v=2026112313';
-import { carryoverFor, planProjects, newFileName, carryoverChanges, round2 } from './rollover.js?v=2026112313';
-import { compressImage, readReceipt } from './receipt.js?v=2026112313';
+import { GraphStore } from './store-graph.js?v=2026112314';
+import { DemoStore } from './store-demo.js?v=2026112314';
+import { carryoverFor, planProjects, newFileName, carryoverChanges, round2 } from './rollover.js?v=2026112314';
+import { compressImage, readReceipt } from './receipt.js?v=2026112314';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -533,10 +533,11 @@ const isInternal = p => p?.Type === 'Internal';
 const isOpportunity = p => (cfg().opportunityStatuses || []).includes(p?.Status);
 // Internal and opportunity (pre-PO) work isn't billable by default
 const defaultBillable = p => !!p && !isInternal(p) && !isOpportunity(p);
-// Projects in the order you're likely to want them: new projects (the last few
-// added to the Projects table, not yet used by you) first, then the ones you've
-// logged time on, most recent first, then the rest, newest first. Opportunities and
-// projects on hold are listed separately at the end, in the same order.
+// Projects in the order you're likely to want them. Internal projects (Internal,
+// Training, …) are pinned at the top. Then new projects (the last few added to
+// the Projects table, not yet used by you), then the ones you've logged time on,
+// most recent first, then the rest, newest first. Opportunities and projects on
+// hold are listed separately at the end. Within each group the order is the same.
 function projectOptions(all) {
   const open = [...cfg().activeStatuses, ...(cfg().opportunityStatuses || [])];
   const every = rows('Projects');
@@ -547,7 +548,8 @@ function projectOptions(all) {
   const byRecent = (a, b) => { const x = rank(a), y = rank(b); return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]; };
   const ps = every.filter(p => all || open.includes(p.Status)).sort(byRecent);
   return [
-    { group: 'Most recent first', items: ps.filter(p => !isOpportunity(p)).map(p => p.Name) },
+    { group: 'Internal', items: ps.filter(p => isInternal(p) && !isOpportunity(p)).map(p => p.Name) },
+    { group: 'Most recent first', items: ps.filter(p => !isInternal(p) && !isOpportunity(p)).map(p => p.Name) },
     { group: 'Opportunities & on hold (not billable until PO)', items: ps.filter(p => isOpportunity(p) && !isInternal(p)).map(p => p.Name) },
   ].filter(g => g.items.length);
 }
@@ -558,11 +560,11 @@ const distinct = (table, col, filter = () => true) => {
   return [...seen.values()].slice(0, 60);
 };
 
-// My most used project + task pairs from recent time, for one-tap entry. The hours
+// My most used project + task pairs from recent time, for quick entry. The hours
 // come from the latest time that pair was logged; closed projects are left out.
 function quickPairs() {
   const recent = rows('Tasks').filter(t => t.Worker === me && clean(t.Task))
-    .sort((a, b) => num(b.Date) - num(a.Date) || b._row - a._row).slice(0, 80);
+    .sort((a, b) => num(b.Date) - num(a.Date) || b._row - a._row).slice(0, 150);
   const open = new Set(projectOptions(false).flatMap(g => g.items));
   const pairs = new Map();
   for (const t of recent) {
@@ -571,12 +573,12 @@ function quickPairs() {
     const e = pairs.get(k) || { Project: t.Project, Task: clean(t.Task), Hours: t.Hours, n: 0, last: num(t.Date) };   // first seen = most recent
     e.n++; pairs.set(k, e);
   }
-  return [...pairs.values()].sort((a, b) => b.n - a.n || b.last - a.last).slice(0, 6);
+  return [...pairs.values()].sort((a, b) => b.n - a.n || b.last - a.last).slice(0, 10);
 }
 function quickAddHTML() {
   const pairs = quickPairs();
-  return pairs.length ? `<div class="chips" id="quick"><span class="chips-label">Quick add</span>${pairs.map((p, i) =>
-    `<button type="button" class="chip" data-i="${i}" title="${esc(p.Project)} · ${esc(p.Task)} · ${hrs(p.Hours)} h">${esc(p.Project)}<small>${esc(p.Task)}</small></button>`).join('')}</div>` : '';
+  return pairs.length ? `<div class="field quickadd"><select id="quick" aria-label="Quick add a recent project and task"><option value="">Quick add: a recent project and task…</option>${pairs.map((p, i) =>
+    `<option value="${i}">${esc(p.Project)} · ${esc(p.Task)} · ${hrs(p.Hours)} h</option>`).join('')}</select></div>` : '';
 }
 function fillTimeForm(form, e, { today = false, billable } = {}) {
   const f = form.elements;
@@ -669,7 +671,11 @@ const TIME = {
     };
     proj.onchange = () => { setBillable(); setList(); paintBudget(); };
     const pairs = quickPairs();
-    $$('#quick .chip', form).forEach(c => c.onclick = () => fillTimeForm(form, pairs[Number(c.dataset.i)]));
+    if ($('#quick', form)) $('#quick', form).onchange = e => {
+      const p = pairs[Number(e.target.value)];
+      e.target.value = '';                                // back to the heading, ready for another pick
+      if (p) fillTimeForm(form, p);
+    };
     form.elements.Hours.oninput = paintBudget;
     bill.onchange = paintBudget;
     const pick = !editing && ls.get('pickProject', '');

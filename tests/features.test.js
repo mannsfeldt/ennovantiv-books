@@ -152,7 +152,7 @@ test('report days: printing a report starts the count again from today (even wit
 const projectOrder = app => [...app.form().elements.Project.querySelectorAll('optgroup')].map(g => ({ group: g.label, items: [...g.children].map(o => o.value) }));
 const daysAgoSerial = n => { const d = new Date(); d.setDate(d.getDate() - n); return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5); };
 
-test('projects: the list runs from most recently used to least, with new projects first, not grouped by client', withApp('/dashboard', async app => {
+test('projects: Internal projects stay pinned at the top; the rest run from newest and most recently used, not grouped by client', withApp('/dashboard', async app => {
   app.store.data.Tasks = [];                                // start from a known history
   const log = (project, daysAgo, worker = 'Demo User') => app.store.addRow('Tasks', { Date: daysAgoSerial(daysAgo), Project: project, Hours: 1, Task: 't', Worker: worker, Billable: true, Invoiced: false, Paid: false });
   await log('Feeder Study', 20); await log('Internal', 2); await log('Substation Upgrade', 0);
@@ -161,9 +161,10 @@ test('projects: the list runs from most recently used to least, with new project
   await app.store.loadAll(['Projects', 'Tasks']);
   await app.go('/time');
   const groups = projectOrder(app);
-  equal(groups[0].items, ['Brand New', 'Hospital Generator', 'Substation Upgrade', 'Internal', 'Feeder Study', 'Training'], 'one list, newest and most recently used first');
+  equal(groups[0], { group: 'Internal', items: ['Internal', 'Training'] }, 'Internal first, most recently used first within it');
+  equal(groups[1].items, ['Brand New', 'Hospital Generator', 'Substation Upgrade', 'Feeder Study'], 'then one list, newest and most recently used first');
   assert(!groups.some(g => /Northwind|Contoso/.test(g.group)), 'no client groups');
-  equal(groups[1].items, ['Arc Flash Review'], 'opportunities stay in their own group at the end');
+  equal(groups[2].items, ['Arc Flash Review'], 'opportunities stay in their own group at the end');
 }));
 
 // ---- repeat and favourites (time) ----
@@ -176,9 +177,27 @@ async function seedHistory(app) {
   await app.store.loadAll(['Projects', 'Tasks']);
   await app.go('/dashboard'); await app.go('/time');
 }
-const chips = app => app.$$('#quick .chip');
+// Quick add is a drop-down: a heading option, then one option per project + task pair
+const chips = app => [...app.$$('#quick option')].filter(o => o.value !== '');
+const pickQuick = (app, i) => { const s = app.$('#quick'); s.value = String(i); s.dispatchEvent(new app.win.Event('change', { bubbles: true })); };
 
-test('repeat: quick-add chips offer my most used project and task pairs, most used first', withApp('/dashboard', async app => {
+test('repeat: quick add is a drop-down, not a block of buttons', withApp('/dashboard', async app => {
+  await seedHistory(app);
+  equal(app.$('#quick').tagName, 'SELECT');
+  equal(app.$$('#quick .chip').length, 0, 'no buttons taking up room');
+  equal(app.$('#quick').value, '', 'sits on its heading until you pick');
+}));
+
+test('repeat: the drop-down holds up to 10 of my most used pairs', withApp('/dashboard', async app => {
+  app.store.data.Tasks = [];
+  for (let i = 1; i <= 12; i++) await app.store.addRow('Tasks', { Date: daysAgoSerial(i), Project: 'Feeder Study', Hours: 1, Task: `task ${i}`, Worker: 'Demo User', Billable: true, Invoiced: false, Paid: false });
+  await app.store.loadAll(['Projects', 'Tasks']);
+  await app.go('/dashboard'); await app.go('/time');
+  equal(chips(app).length, 10, 'ten pairs');
+  assert(/task 1\b/.test(chips(app)[0].textContent), 'the most recent first among equals');
+}));
+
+test('repeat: quick add lists my most used project and task pairs, most used first', withApp('/dashboard', async app => {
   await seedHistory(app);
   const labels = chips(app).map(c => c.textContent.replace(/\s+/g, ' ').trim());
   equal(labels.length, 2, 'two pairs, not the other person\'s');
@@ -186,10 +205,11 @@ test('repeat: quick-add chips offer my most used project and task pairs, most us
   assert(/Substation Upgrade/.test(labels[1]), labels[1]);
 }));
 
-test('repeat: tapping a chip fills the form from the latest time that pair was logged', withApp('/dashboard', async app => {
+test('repeat: choosing one fills the form from the latest time that pair was logged, and the list resets', withApp('/dashboard', async app => {
   await seedHistory(app);
-  chips(app)[0].click(); await sleep(60);
+  pickQuick(app, 0); await sleep(60);
   const f = app.form().elements;
+  equal(app.$('#quick').value, '', 'ready for another pick');
   equal([f.Project.value, f.Task.value, f.Hours.value], ['Feeder Study', 'report writing', '2.5'], 'project, the latest wording of the task, and the latest hours');
   assert(/remaining/.test(app.$('#budget').textContent), 'the budget panel updates too');
   await app.save();
@@ -197,11 +217,11 @@ test('repeat: tapping a chip fills the form from the latest time that pair was l
   equal([row.Project, row.Task, row.Hours, row.Billable], ['Feeder Study', 'report writing', 2.5, true], 'one more tap saves it');
 }));
 
-test('repeat: no chips while editing an entry', withApp('/dashboard', async app => {
+test('repeat: no quick add while editing an entry', withApp('/dashboard', async app => {
   await seedHistory(app);
   await app.showAll();
   await app.edit('Tasks', app.rows('Tasks')[0]);
-  equal(chips(app).length, 0);
+  assert(!app.$('#quick'), 'not shown');
 }));
 
 test('repeat: a project that is no longer open is not offered', withApp('/dashboard', async app => {
