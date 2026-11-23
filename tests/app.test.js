@@ -4,7 +4,8 @@ import { test, assert, equal, until, sleep } from './harness.js';
 
 // A fresh copy of the app for each test, so sample data never leaks between tests.
 export async function openApp(hash = '/dashboard', query = '') {
-  for (const k of Object.keys(localStorage)) if (/^books:(pendingInvoice|printed:|whoami:)/.test(k)) localStorage.removeItem(k);
+  // the demo keeps its own saved values (books-demo:…), so each test starts from a clean slate
+  for (const k of Object.keys(localStorage)) if (k.startsWith('books-demo:')) localStorage.removeItem(k);
   const frame = document.createElement('iframe');
   frame.style.cssText = 'width:1200px;height:900px;border:0;position:absolute;left:-9999px;top:0';
   frame.src = `../index.html?demo&t=${Date.now()}${query}#${hash}`;
@@ -144,7 +145,7 @@ function failNextBulkWrite(app, partial = 0) {
     throw new Error('Failed to fetch');
   };
 }
-const pending = () => JSON.parse(localStorage.getItem('books:pendingInvoice') || 'null');
+const pending = () => JSON.parse(localStorage.getItem('books-demo:pendingInvoice') || 'null');
 
 test('A-03: an interrupted recording can be resumed, and ends complete with one Invoices row', withApp('/dashboard', async app => {
   await addTracking(app);
@@ -395,7 +396,7 @@ test('who: an unknown person is asked who they are instead of being treated as t
   dlg.querySelector('select[name=worker]').value = 'Alex Helper';
   dlg.querySelector('button[value=ok]').click(); await sleep(150);
   equal(app.$('.page-head h1').textContent, 'Hello, Alex');
-  equal(JSON.parse(localStorage.getItem('books:whoami:pat@ennovantiv.com')), 'Alex Helper', 'remembered for next time');
+  equal(JSON.parse(localStorage.getItem('books-demo:whoami:pat@ennovantiv.com')), 'Alex Helper', 'remembered for next time');
 }, asUser('Pat Newcomer', 'pat@ennovantiv.com')));
 
 test('who: a worker found by email is unchanged', withApp('/dashboard', async app => {
@@ -404,9 +405,11 @@ test('who: a worker found by email is unchanged', withApp('/dashboard', async ap
 }));
 
 test('who: another person\'s remembered Worker on a shared device is not applied', async () => {
-  localStorage.setItem('books:sticky:time', JSON.stringify({ Worker: 'Demo User' }));                          // the old, per-device memory
-  localStorage.setItem('books:sticky:time:demo@example.com', JSON.stringify({ Worker: 'Demo User' }));        // David's, under his own address
-  const app = await openApp('/time', asUser('Alex Helper', 'alex.helper@ennovantiv.com'));
-  try { equal(app.form().elements.Worker.value, 'Alex Helper'); }
-  finally { app.close(); localStorage.removeItem('books:sticky:time'); localStorage.removeItem('books:sticky:time:demo@example.com'); }
+  const app = await openApp('/dashboard', asUser('Alex Helper', 'alex.helper@ennovantiv.com'));
+  try {
+    localStorage.setItem('books-demo:sticky:time', JSON.stringify({ Worker: 'Demo User' }));                      // the old, per-device memory
+    localStorage.setItem('books-demo:sticky:time:demo@example.com', JSON.stringify({ Worker: 'Demo User' }));    // David's, under his own address
+    await app.go('/time');
+    equal(app.form().elements.Worker.value, 'Alex Helper');
+  } finally { app.close(); }
 });

@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112301';
-import { DemoStore } from './store-demo.js?v=2026112301';
-import { compressImage, readReceipt } from './receipt.js?v=2026112301';
+import { GraphStore } from './store-graph.js?v=2026112302';
+import { DemoStore } from './store-demo.js?v=2026112302';
+import { compressImage, readReceipt } from './receipt.js?v=2026112302';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -20,15 +20,19 @@ const todayISO = () => { const d = new Date(); return new Date(d - d.getTimezone
 const longDate = iso => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
 const money = v => num(v).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
 const hrs = v => num(v).toLocaleString('en-CA', { maximumFractionDigits: 2 });
+// The demo keeps its own saved values, so trying it never touches the live app's
+// workbook links, activity log or remembered choices.
+const PREFIX = DEMO ? 'books-demo:' : 'books:';
 const ls = {
-  get(k, d) { try { return JSON.parse(localStorage.getItem('books:' + k)) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('books:' + k, JSON.stringify(v)); } catch {} },
+  get(k, d) { try { return JSON.parse(localStorage.getItem(PREFIX + k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)); } catch {} },
 };
 const rows = name => (store.tables[name]?.rows || []).filter(r => r._raw.some(v => v !== '' && v !== null));
 const clean = s => String(s || '').trim();
 
 // ---------- app state ----------
 const CFG = { ...window.BOOKS_CONFIG, ...ls.get('settings', {}) };
+if (DEMO && !CFG.fileShareUrl) CFG.fileShareUrl = 'demo://2026';
 const store = DEMO ? new DemoStore(CFG, SCHEMA) : new GraphStore(CFG, SCHEMA);
 if (DEMO) window.demoStore = store; // for poking at sample data in the browser console
 const cfg = () => store.cfg; // demo store may override company details
@@ -88,23 +92,109 @@ async function boot() {
   await connect();
 }
 
-async function connect() {
+// ---------- workbooks ----------
+// A device remembers the workbooks it has opened (2026, 2027, …), each with a
+// nickname, so switching years is one tap instead of pasting a long link.
+const books = () => ls.get('workbooks', []);
+const saveBooks = list => ls.set('workbooks', list);
+const fileYear = name => (/(20\d\d)/.exec(name || '') || [])[1] || '';
+const bookLabel = w => clean(w.nickname) || fileYear(w.name) || clean(w.name).replace(/\.xlsx$/i, '') || 'Workbook';
+const sortedBooks = () => [...books()].sort((a, b) => clean(b.name).localeCompare(clean(a.name)));
+const currentBook = () => books().find(w => w.url === CFG.fileShareUrl);
+
+// make a saved workbook the one this device opens
+function useBook(w) {
+  const next = { fileShareUrl: w.url, receiptFolder: w.receiptFolder || CFG.receiptFolder };
+  ls.set('settings', next); Object.assign(CFG, next); Object.assign(store.cfg, next);
+}
+// after a workbook has opened: add it to the list, or refresh its entry
+function rememberBook(extra = {}) {
+  const list = books(), f = store.file;
+  let w = list.find(x => x.url === CFG.fileShareUrl) || (f.itemId && list.find(x => x.itemId === f.itemId));
+  if (!w) { w = { id: 'wb' + Date.now().toString(36), nickname: '' }; list.push(w); }
+  Object.assign(w, {
+    url: CFG.fileShareUrl, name: f.name, itemId: f.itemId || '', lastUsed: new Date().toISOString(),
+    receiptFolder: w.receiptFolder || (fileYear(f.name) ? 'Receipts/' + fileYear(f.name) : CFG.receiptFolder),
+  }, extra);
+  saveBooks(list);
+  return w;
+}
+function paintChip() {
+  const chip = $('#filechip'), w = currentBook();
+  if (!chip || !w) return;
+  chip.innerHTML = `<span class="dot"></span><span class="lbl">${esc(bookLabel(w))}</span><svg viewBox="0 0 24 24" class="caret"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  chip.title = `${w.name || ''}: switch workbook`;
+}
+function closeMenu() { $('.wbmenu')?.remove(); $('#filechip')?.setAttribute('aria-expanded', 'false'); }
+function toggleMenu() {
+  if ($('.wbmenu')) return closeMenu();
+  const m = document.createElement('div');
+  m.className = 'wbmenu'; m.setAttribute('role', 'menu');
+  m.innerHTML = `<div class="wbhead">Workbook</div>
+    ${sortedBooks().map(w => `<button role="menuitem" data-wb="${esc(w.id)}" class="${w.url === CFG.fileShareUrl ? 'cur' : ''}"><span class="tick">${w.url === CFG.fileShareUrl ? '✓' : ''}</span><span><b>${esc(bookLabel(w))}</b><small>${esc(w.name)}</small></span></button>`).join('')}
+    <hr><a href="${esc(store.file?.webUrl || '#')}" target="_blank" rel="noopener">Open this workbook in Excel ↗</a>
+    <a href="#/settings" data-close>Manage workbooks…</a>`;
+  document.body.appendChild(m);
+  $('#filechip').setAttribute('aria-expanded', 'true');
+  $$('[data-wb]', m).forEach(b => b.onclick = () => { closeMenu(); switchBook(b.dataset.wb); });
+  $$('[data-close]', m).forEach(a => a.onclick = closeMenu);
+}
+document.addEventListener('click', e => { if (!e.target.closest('.wbmenu, #filechip')) closeMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+
+// Open another saved workbook. If it won't open, go back to the one in use.
+async function switchBook(id) {
+  const w = books().find(x => x.id === id);
+  if (!w || w.url === CFG.fileShareUrl) return;
+  const prev = currentBook();
+  useBook(w);
+  if (await connect({ quiet: true })) return toast(`Switched to <b>${esc(bookLabel(currentBook()))}</b> (${esc(store.file.name)}).`, 'info', 3500);
+  if (prev) { useBook(prev); await connect({ quiet: true }); }
+  toast(`Couldn't open <b>${esc(bookLabel(w))}</b>. ${prev ? `Still on <b>${esc(bookLabel(prev))}</b>.` : ''}`, 'warn', 9000);
+}
+// Add a workbook by its link, open it, and keep it only if it opens.
+async function addBook(url, nickname, folder) {
+  url = clean(url);
+  if (!url) return toast('Paste the workbook link first.', 'warn');
+  const same = books().find(w => w.url === url);
+  if (same) {
+    if (clean(nickname)) { const list = books(); list.find(w => w.id === same.id).nickname = clean(nickname); saveBooks(list); }
+    return switchBook(same.id);
+  }
+  const prev = currentBook();
+  useBook({ url, receiptFolder: clean(folder) });
+  if (await connect({ quiet: true })) {
+    const extra = { nickname: clean(nickname) };
+    if (clean(folder)) extra.receiptFolder = clean(folder);
+    const w = rememberBook(extra);
+    CFG.receiptFolder = store.cfg.receiptFolder = w.receiptFolder; ls.set('settings', { fileShareUrl: w.url, receiptFolder: w.receiptFolder });
+    paintChip();
+    return toast(`Added and opened <b>${esc(bookLabel(w))}</b> (${esc(store.file.name)}).`, 'ok', 5000);
+  }
+  if (prev) { useBook(prev); await connect({ quiet: true }); }
+  toast(`Couldn't open that workbook, so it was not saved.${prev ? ` Still on <b>${esc(bookLabel(prev))}</b>.` : ''} Check the link, and that you have access to the file.`, 'warn', 10000);
+}
+
+async function connect({ quiet = false } = {}) {
+  RATES = null;
   try {
     await busy('Opening workbook…', async () => {
       await store.openFile(CFG.fileShareUrl);
       await loadEverything();
     });
   } catch {
-    location.hash = '#/settings';
-    return route();
+    if (!quiet) { location.hash = '#/settings'; route(); }
+    return false;
   }
+  const w = rememberBook();
+  CFG.receiptFolder = store.cfg.receiptFolder = w.receiptFolder;
   me = identifyWorker();
-  $('#filechip').innerHTML = `<span class="dot"></span>${esc(store.file.name)}`;
-  $('#filechip').href = store.file.webUrl;
+  paintChip();
   route();
   if (!me) askWhoYouAre();
   const j = ls.get('pendingInvoice', null);
-  if (j) toast(`<b>${esc(j.number)} is only partly recorded.</b> Open <a href="#/invoices">Invoices</a> and press Resume.`, 'warn', 15000);
+  if (j && (!j.wb || j.wb === CFG.fileShareUrl)) toast(`<b>${esc(j.number)} is only partly recorded.</b> Open <a href="#/invoices">Invoices</a> and press Resume.`, 'warn', 15000);
+  return true;
 }
 
 // Which row of the Workers table is the person signed in? Never guess: the
@@ -182,7 +272,7 @@ function renderShell() {
       <a class="brandmark" href="#/dashboard">${brandMark('dark')}</a>
       <div class="topbar-right">
         ${DEMO ? '<span class="pill demo" title="Sample data, nothing is saved">DEMO</span>' : ''}
-        <a id="filechip" class="filechip" target="_blank" rel="noopener" title="Open the workbook in Excel"><span class="dot off"></span>Not connected</a>
+        <button id="filechip" class="filechip" aria-haspopup="menu" aria-expanded="false" title="Switch workbook"><span class="dot off"></span>Not connected</button>
         <button class="iconbtn" id="refresh" title="Reload from Excel">${icon('M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5')}</button>
         <a class="iconbtn mobile-only" href="#/settings" title="Settings">${icon(GEAR)}</a>
       </div>
@@ -193,6 +283,7 @@ function renderShell() {
     <div id="busy" class="busy" hidden><div class="spinner"></div><span></span></div>
     <div id="print-root"></div>`;
   $('#refresh').onclick = () => store.file && refresh();
+  $('#filechip').onclick = () => store.file && toggleMenu();
   window.onhashchange = route;
 }
 
@@ -200,6 +291,7 @@ function route() {
   const [k, sub] = (location.hash.replace(/^#\/?/, '') || 'dashboard').split('/');
   const navKey = { invoice: 'invoices', report: 'expenses' }[k] || k;
   $$('.nav a').forEach(a => a.classList.toggle('active', a.dataset.k === navKey));
+  closeMenu();
   const view = $('#view');
   if (!store.file && k !== 'settings') { view.innerHTML = '<div class="card"><p class="muted">Connecting to the workbook…</p></div>'; return; }
   const views = { dashboard: viewDashboard, time: () => viewEntry(TIME), expenses: () => viewEntry(EXPENSE), mileage: () => viewEntry(MILEAGE), invoices: viewInvoices, invoice: viewInvoiceDetail, projects: viewProjects, report: viewExpenseReport, settings: viewSettings };
@@ -942,8 +1034,8 @@ function viewInvoices(view, sub) {
   $$('[data-paid]', view).forEach(b => b.onclick = (e) => { e.stopPropagation(); markPaid(rows('Invoices').find(x => x._row === Number(b.dataset.paid)), () => viewInvoices(view)); });
   $$('tr[data-inv]', view).forEach(tr => tr.onclick = () => { location.hash = '#/invoice/' + encodeURIComponent(tr.dataset.inv); });
   wireInvoiceCheck(view);
-  if ($('#resume', view)) {
-    $('#resume', view).onclick = () => runPendingInvoice(view);
+  if ($('#discard', view)) {
+    if ($('#resume', view)) $('#resume', view).onclick = () => runPendingInvoice(view);
     $('#discard', view).onclick = () => {
       const j = ls.get(PENDING, null);
       if (!confirm(`Stop tracking the interrupted ${j.number}?\n\nWhatever was already written stays in the workbook. You would need to finish it by hand: check the Invoices sheet and the Invoiced column on the Time sheet.`)) return;
@@ -1103,6 +1195,7 @@ async function finishInvoice(j) {
 async function runPendingInvoice(view) {
   const j = ls.get(PENDING, null);
   if (!j) return;
+  if (j.wb && j.wb !== CFG.fileShareUrl) return toast(`${esc(j.number)} belongs to another workbook. Switch to it to resume.`, 'warn', 8000);
   try {
     await busy(`Recording ${j.number}…`, async () => {
       const r = await finishInvoice(j);
@@ -1118,6 +1211,14 @@ async function runPendingInvoice(view) {
 function pendingInvoiceCard() {
   const j = ls.get(PENDING, null);
   if (!j) return '';
+  if (j.wb && j.wb !== CFG.fileShareUrl) {
+    const owner = books().find(w => w.url === j.wb);
+    return `<div class="card pending">
+      <h2>${esc(j.number)} is only partly recorded in another workbook</h2>
+      <p class="small">It was being recorded in <b>${esc(owner ? bookLabel(owner) : 'a different workbook')}</b>. Switch to that workbook (the name at the top) and press Resume there. Until it is finished, recording new invoices is paused.</p>
+      <div class="actions"><button class="btn" id="discard">Discard…</button></div>
+    </div>`;
+  }
   return `<div class="card pending">
     <h2>${esc(j.number)} is only partly recorded</h2>
     <p class="small">Recording ${esc(j.number)} (${money(j.total)}) for ${esc(j.client)} was interrupted on ${new Date(j.when).toLocaleString('en-CA')}. Until it is finished, some of its time may not be marked Invoiced and would appear on the next invoice as well.</p>
@@ -1136,7 +1237,7 @@ async function recordInvoice(client, date, view) {
   const chk = await preInvoiceCheck(client, date, inv, 'record');
   if (!chk) return;
   ls.set(PENDING, {
-    number: inv.number, client, date, total: inv.total, mark: !!mark, clearStray: chk.clearStray, when: new Date().toISOString(),
+    number: inv.number, client, date, total: inv.total, mark: !!mark, wb: CFG.fileShareUrl, clearStray: chk.clearStray, when: new Date().toISOString(),
     invoicesBefore: existing, added: false,
     tasks: journalRows('Tasks', taskSig, inv.tasks), disb: journalRows('Disbursements', disbSig, inv.disb.map(d => d.row)),
   });
@@ -1642,19 +1743,32 @@ function wireTracking(view) {
 }
 
 function viewSettings(view) {
-  const s = ls.get('settings', {});
+  const cur = currentBook();
   view.innerHTML = `
     <div class="page-head"><h1>Settings</h1></div>
     <div class="grid2">
-      <form class="card form" id="sform">
-        <h2>Workbook</h2>
-        <div class="field"><label for="s-url">Link to the bookkeeping workbook</label>
-          <input id="s-url" type="url" value="${esc(s.fileShareUrl ?? window.BOOKS_CONFIG.fileShareUrl)}" placeholder="https://…sharepoint.com/…/Bookkeeping%202026.xlsx" ${DEMO ? 'disabled' : ''}>
-          <small>In Excel for the web: <b>Share → Copy link</b>. Change this each year when you start a new workbook.</small></div>
-        <div class="field"><label for="s-rf">Receipts folder (next to the workbook)</label>
-          <input id="s-rf" value="${esc(s.receiptFolder ?? window.BOOKS_CONFIG.receiptFolder)}"></div>
-        <div class="actions"><button class="btn primary" ${DEMO ? 'disabled' : ''}>Save &amp; reconnect</button></div>
-      </form>
+      <div class="card" id="wbs">
+        <h2>Workbooks</h2>
+        <p class="small muted">The workbooks this device has opened. Switch between them from the name at the top of the screen, and give each a short nickname.</p>
+        ${books().length ? `<table class="list wb-list"><tbody>${sortedBooks().map(w => `<tr>
+          <td><input class="nick" data-id="${esc(w.id)}" value="${esc(w.nickname)}" placeholder="${esc(fileYear(w.name) || 'Nickname')}" aria-label="Nickname for ${esc(w.name)}"></td>
+          <td class="hide-sm"><small class="muted">${esc(w.name)}</small></td>
+          <td class="r">${w.url === CFG.fileShareUrl ? '<span class="pill solid">Open</span>' : `<button class="btn sm" data-use="${esc(w.id)}">Open</button> <button class="btn sm" data-del="${esc(w.id)}" title="Forget this link on this device">Remove</button>`}</td>
+        </tr>`).join('')}</tbody></table>` : '<p class="muted">No workbook yet. Add one below.</p>'}
+        ${cur ? `<div class="field" style="margin-top:1rem"><label for="s-rf">Receipts folder for the open workbook (next to it)</label>
+          <input id="s-rf" value="${esc(cur.receiptFolder || CFG.receiptFolder)}"></div>` : ''}
+        <form id="wbadd" class="form" style="margin-top:1.25rem">
+          <h3 class="group-h" style="margin-top:0">Add a workbook</h3>
+          <div class="field"><label for="s-url">Link to the workbook</label>
+            <input id="s-url" type="text" placeholder="https://…sharepoint.com/…/Bookkeeping%202027.xlsx">
+            <small>In Excel for the web: <b>Share → Copy link</b>. It opens right away and is kept only if it opens.</small></div>
+          <div class="row2">
+            <div class="field"><label for="s-nick">Nickname</label><input id="s-nick" placeholder="e.g. 2027" autocomplete="off"></div>
+            <div class="field"><label for="s-folder">Receipts folder</label><input id="s-folder" placeholder="default: Receipts/<year>" autocomplete="off"></div>
+          </div>
+          <div class="actions"><button class="btn primary" type="submit">Add &amp; open</button></div>
+        </form>
+      </div>
       <div class="card">
         <h2>Account</h2>
         <p>Signed in as <b>${esc(user?.name)}</b><br><span class="muted">${esc(user?.email)}</span></p>
@@ -1667,18 +1781,33 @@ function viewSettings(view) {
           <li>Each entry is written as a new row in a named Excel table. Formula columns are left for Excel to calculate.</li>
           <li>Before changing rows (an edit, a delete, or a bulk update such as marking time invoiced or paid), the app checks they still match Excel. If the table was sorted or changed meanwhile, it writes nothing and asks you to refresh.</li>
           <li>Receipts are read on this device and saved to your own receipts folder.</li>
+          <li>The workbook links and nicknames above are kept on this device only.</li>
         </ul>
       </div>
     </div>
     ${store.file ? trackingCard() : ''}`;
   wireTracking(view);
-  $('#sform').onsubmit = async (e) => {
+  $$('input.nick', view).forEach(i => i.onchange = () => {
+    const list = books(), w = list.find(x => x.id === i.dataset.id);
+    if (!w) return;
+    w.nickname = clean(i.value); saveBooks(list); paintChip();
+  });
+  $$('[data-use]', view).forEach(b => b.onclick = async () => { await switchBook(b.dataset.use); viewSettings(view); });
+  $$('[data-del]', view).forEach(b => b.onclick = () => {
+    const w = books().find(x => x.id === b.dataset.del);
+    if (!w || !confirm(`Remove ${bookLabel(w)} (${w.name}) from this device's list?\n\nThe workbook itself is not touched; you can add its link again later.`)) return;
+    saveBooks(books().filter(x => x.id !== w.id)); viewSettings(view);
+  });
+  if ($('#s-rf')) $('#s-rf').onchange = () => {
+    const list = books(), w = list.find(x => x.url === CFG.fileShareUrl);
+    if (!w) return;
+    w.receiptFolder = clean($('#s-rf').value) || 'Receipts'; saveBooks(list);
+    CFG.receiptFolder = store.cfg.receiptFolder = w.receiptFolder; ls.set('settings', { fileShareUrl: w.url, receiptFolder: w.receiptFolder });
+  };
+  $('#wbadd').onsubmit = async (e) => {
     e.preventDefault();
-    const next = { fileShareUrl: clean($('#s-url').value), receiptFolder: clean($('#s-rf').value) || 'Receipts' };
-    ls.set('settings', next);
-    Object.assign(CFG, next); Object.assign(store.cfg, next);
-    await connect();
-    location.hash = '#/dashboard';
+    await addBook($('#s-url').value, $('#s-nick').value, $('#s-folder').value);
+    viewSettings(view);
   };
   $('#whoami').onclick = async (e) => { e.preventDefault(); await askWhoYouAre(); viewSettings(view); };
   $('#so').onclick = () => store.logout();

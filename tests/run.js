@@ -1,6 +1,7 @@
 import { tests } from './harness.js';
 import './store-graph.test.js';
 import './app.test.js';
+import './workbooks.test.js';
 
 const summary = document.querySelector('#summary'), list = document.querySelector('#results');
 // The app tests clear a few of the app's saved values, so never run them on the live site.
