@@ -91,7 +91,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 - **Several workbooks (2026 / 2027):** the workbook's name at the top is a menu. Pick another saved workbook to switch in one tap, or open **Settings → Workbooks** to give each a nickname, add a new one by its link (kept only if it opens) or remove one. The list is kept on each device, and the receipts folder follows the workbook's year. An interrupted invoice stays tied to the workbook it was recorded in.
 - **Who you are:** the app matches the signed-in person to the Workers table by sign-in address, then by name. If neither matches it asks once ("Who are you?") and remembers. Settings shows the match with a *Not you?* link.
 - **Shared change log:** **Settings → Shared change log** adds a `ChangeLog` sheet to the workbook. Every change made through the app (and every printed invoice or expense report) is then recorded there with who, when, what and where, and the dashboard shows it for everyone. It never delays a save; anything that couldn't be sent waits and goes with the next write.
-- **Dashboard:** *Last expense report* counts the days since a report was last printed or marked reimbursed. *Fixed-fee budgets* lists active fixed-fee projects at 80% or more of their fee (over budget first); tap one to log time on it. Budgets count `Total + Overage` from the Projects table.
+- **Dashboard:** *Last expense report* counts the days since a report was last printed or marked reimbursed. The hours-remaining panel on the Time form counts `Total + Overage` from the Projects table, so hours billed beyond the fee show as over budget.
 - **Time entry shortcuts:** *Quick add* chips offer your most used project and task pairs; a **Repeat** button on any row copies it into the form dated today. The project list runs from new and most recently used, not by client.
 - **Safeguards on writes:**
   - A row that Excel accepted is always reported as saved, even if re-reading it fails, so a retry can't duplicate it. Add and delete are never replayed after a time-out.
@@ -119,7 +119,7 @@ Open the site in Safari (iPhone) or Chrome (Android), then choose **Share → Ad
 
 ## Updating the app
 
-Each file is referenced with a version tag (`?v=2026112308` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
+Each file is referenced with a version tag (`?v=2026112309` in `index.html`, `js/app.js` and `js/store-demo.js`). When you change the code, change that number everywhere (same value), so browsers and GitHub Pages' cache load the new files together instead of mixing old and new.
 
 ## Tests
 
