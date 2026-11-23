@@ -118,6 +118,7 @@ export class GraphStore {
     const enc = 'u!' + btoa(unescape(encodeURIComponent(shareUrl.trim())))
       .replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
     const item = await this.api('GET', `/shares/${enc}/driveItem?$select=id,name,webUrl,parentReference`);
+    this.tables = {};   // nothing from a previously open workbook may linger
     this.file = {
       driveId: item.parentReference.driveId,
       itemId: item.id,
@@ -314,6 +315,22 @@ export class GraphStore {
     if (t.headers.includes(name)) return;
     await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/columns/add`, { index: null, values: [[name], ...t.rows.map(() => [''])] }, { once: true });
     await this.loadTable(tableName);
+  }
+
+  // Add several rows to a table in one request, without re-reading it. Used for the
+  // change log, where a missed row is retried by the caller rather than repeated here.
+  async addRows(tableName, rowsToAdd) {
+    await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/rows/add`, { index: null, values: rowsToAdd }, { once: true });
+  }
+
+  // Create a new sheet holding a new, named table with the given headers.
+  async createTable(name, sheetName, headers) {
+    const addr = `A1:${colName(headers.length)}1`;
+    await this.wbApi('POST', '/worksheets/add', { name: sheetName }, { once: true });
+    await this.wbApi('PATCH', this.rangeApi(sheetName, addr), { values: [headers] });
+    const t = await this.wbApi('POST', '/tables/add', { address: `${sheetName}!${addr}`, hasHeaders: true }, { once: true });
+    await this.wbApi('PATCH', `/tables('${encodeURIComponent(t.id)}')`, { name });
+    return this.loadTable(name);
   }
 
   // ---------- files ----------

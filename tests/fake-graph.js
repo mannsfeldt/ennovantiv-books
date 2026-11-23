@@ -8,21 +8,35 @@ const colName = n => { let s = ''; while (n > 0) { const r = (n - 1) % 26; s = S
 
 // tables: { Tasks: { sheet: 'Time', headers: [...], rows: [[...], ...] } }
 export function fakeGraph(tables) {
-  const fake = { tables, calls: [], faults: [] };
+  const fake = { tables, calls: [], faults: [], sheets: {} };
   const bySheet = sheet => Object.values(tables).find(t => t.sheet === sheet);
   const parse = a => { const m = a.match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/); return { c1: colIndex(m[1]) - 1, r1: +m[2], c2: colIndex(m[3] || m[1]) - 1, r2: +(m[4] || m[2]) }; };
 
   function handle(method, path, body) {
     let m;
     if (path === '/createSession') return { id: 'session-1' };
+    // creating a sheet, writing its header cells, turning them into a named table
+    if (path === '/worksheets/add') { fake.sheets[body.name] = {}; return { name: body.name }; }
+    if (method === 'POST' && path === '/tables/add') {
+      const [sheet, addr] = body.address.split('!'), a = parse(addr), cells = fake.sheets[sheet] || {};
+      const headers = (cells[addr] || [[]])[0].slice(0, a.c2 - a.c1 + 1);
+      const id = 'tbl' + (Object.keys(tables).length + 1);
+      tables[id] = { sheet, headers, rows: [] };
+      return { id, name: id };
+    }
+    if (method === 'PATCH' && (m = path.match(/^\/tables\('(.+?)'\)$/))) { tables[body.name] = tables[m[1]]; delete tables[m[1]]; return {}; }
+    if (method === 'PATCH' && (m = path.match(/^\/worksheets\('(.+?)'\)\/range\(address='(.+?)'\)/)) && fake.sheets[m[1]] && !bySheet(m[1])) {
+      fake.sheets[m[1]][m[2]] = body.values; return {};
+    }
     if ((m = path.match(/^\/tables\('(.+?)'\)\/range/))) {
       const t = tables[m[1]];
       return { address: `${t.sheet}!A1:${colName(t.headers.length)}${t.rows.length + 1}`, values: [[...t.headers], ...t.rows.map(r => [...r])] };
     }
     if ((m = path.match(/^\/tables\('(.+?)'\)\/rows\/add/))) {
       const t = tables[m[1]];
-      t.rows.push(body.values[0].map(v => v ?? ''));
-      return { index: t.rows.length - 1 };
+      const first = t.rows.length;
+      body.values.forEach(v => t.rows.push(v.map(c => c ?? '')));
+      return { index: first };
     }
     if ((m = path.match(/^\/worksheets\('(.+?)'\)\/range\(address='(.+?)'\)(\/delete)?/))) {
       const t = bySheet(m[1]), a = parse(m[2]);

@@ -24,3 +24,89 @@ test('report: the printed report has no "next invoice" line', withApp('/report',
   assert(/expense report/i.test(printed), 'printed something');
   assert(!/next invoice/i.test(printed), 'no next-invoice line');
 }));
+
+// ---- shared change log: data layer ----
+import { fakeGraph, sampleTasks, storeOn } from './fake-graph.js';
+const realFetch = globalThis.fetch;
+const LOG_HEADERS = ['When', 'Who', 'Action', 'Where', 'Detail'];
+const withLogStore = fn => async () => {
+  const fake = fakeGraph(sampleTasks());
+  try { await fn(await storeOn(fake), fake); } finally { globalThis.fetch = realFetch; }
+};
+
+test('log: addRows writes several rows in one request', withLogStore(async (store, fake) => {
+  fake.tables.ChangeLog = { sheet: 'ChangeLog', headers: LOG_HEADERS, rows: [] };
+  await store.addRows('ChangeLog', [['2026-11-23 10:00', 'David', 'Added time entry', 'Time!A9:I9', ''], ['2026-11-23 10:01', 'David', 'Invoice paid', 'Invoices!A4:J4', 'NW2611']]);
+  equal(fake.tables.ChangeLog.rows.length, 2, 'rows written');
+  equal(fake.calls.filter(c => c.includes('rows/add')).length, 1, 'requests sent');
+}));
+
+test('log: createTable makes the sheet, the header row and a named table', withLogStore(async (store, fake) => {
+  const t = await store.createTable('ChangeLog', 'ChangeLog', LOG_HEADERS);
+  equal(t.headers, LOG_HEADERS);
+  equal(fake.tables.ChangeLog.sheet, 'ChangeLog', 'table named ChangeLog on its own sheet');
+  assert(fake.calls.some(c => c.endsWith('/worksheets/add')), 'a sheet was added');
+}));
+
+// ---- shared change log: in the app ----
+const logRows = app => (app.store.data.ChangeLog || []).map(r => ({ when: r[0], who: r[1], action: r[2], where: r[3], detail: r[4] }));
+async function enableLog(app) {
+  await app.go('/settings');
+  app.$('#addlog').click(); await app.idle(); await sleep(100);
+}
+const logTime = app => { app.set('Project', 'Substation Upgrade'); app.set('Hours', '1.5'); app.set('Task', 'Site call'); };
+
+test('log: Settings adds the ChangeLog table to the workbook, once', withApp('/settings', async app => {
+  assert(!app.store.data.ChangeLog, 'not there at first');
+  await enableLog(app);
+  assert(app.store.data.ChangeLog, 'table created');
+  assert(!app.$('#addlog'), 'button gone once it is on');
+  assert(/On/.test(app.$('#logcard').textContent), 'says it is on');
+}));
+
+test('log: once on, every save is recorded with who, when, what and where', withApp('/settings', async app => {
+  await enableLog(app);
+  await app.go('/time'); logTime(app); await app.save();
+  const row = await until(() => logRows(app).find(r => r.action === 'Added time entry'), 4000, 'the log row');
+  equal(logRows(app)[0].action, 'Added shared change log', 'turning the log on is itself recorded');
+  equal([row.who, row.action], ['Demo User', 'Added time entry']);
+  assert(/^Time!A\d+:I\d+/.test(row.where), `where is the sheet range: ${row.where}`);
+  assert(/^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(row.when), `when is a readable timestamp: ${row.when}`);
+}));
+
+test('log: a log write that fails never breaks the save, and is sent with the next one', withApp('/settings', async app => {
+  await enableLog(app);
+  const real = app.store.addRows.bind(app.store); let failed = false;
+  app.store.addRows = async (...a) => { if (!failed) { failed = true; throw new Error('Failed to fetch'); } return real(...a); };
+  const before = app.rows('Tasks').length;
+  await app.go('/time'); logTime(app); await app.save();
+  equal(app.store.data.Tasks.length, before + 1, 'the entry was saved');
+  assert(!/⚠/.test(app.toasts().join(' ')), 'no warning shown for a log problem');
+  await sleep(300);
+  equal(logRows(app).filter(r => r.action === 'Added time entry').length, 0, 'the entry is not logged yet');
+  logTime(app); await app.save();                           // the next save carries the missed row too
+  await until(() => logRows(app).filter(r => r.action === 'Added time entry').length >= 2, 4000, 'both log rows');
+  equal(logRows(app).filter(r => r.action === 'Added time entry').length, 2);
+}));
+
+test('log: entries waiting for a different workbook are not written into this one', withApp('/settings', async app => {
+  await enableLog(app);
+  localStorage.setItem('books-demo:logQueue', JSON.stringify([{ wb: 'demo://elsewhere', row: ['2026-01-01 00:00', 'X', 'ELSEWHERE', '', ''] }]));
+  await app.go('/time'); logTime(app); await app.save();
+  await until(() => logRows(app).find(r => r.action === 'Added time entry'), 4000, 'the log row');
+  assert(!logRows(app).some(r => r.action === 'ELSEWHERE'), 'the other workbook\'s entry stayed out');
+  assert(JSON.parse(localStorage.getItem('books-demo:logQueue')).some(q => q.wb === 'demo://elsewhere'), 'and is still waiting for its own workbook');
+}));
+
+test('log: the dashboard shows what other people changed', withApp('/settings', async app => {
+  await enableLog(app);
+  app.store.data.ChangeLog.push(['2026-11-20 09:15', 'Shari Mannsfeldt', 'Added expense', 'Expenses!A40:N40', '$12.00 · Staples']);
+  await app.store.loadTable('ChangeLog');
+  await app.go('/dashboard');
+  const text = app.$('#view').textContent;
+  assert(text.includes('Shari Mannsfeldt') && text.includes('Added expense'), 'her change is listed with her name');
+}));
+
+test('log: without the table the dashboard says how to turn the shared log on', withApp('/dashboard', async app => {
+  assert(/shared change log/i.test(app.$('#view').textContent), 'hint shown');
+}));

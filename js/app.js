@@ -1,11 +1,11 @@
-import { GraphStore } from './store-graph.js?v=2026112303';
-import { DemoStore } from './store-demo.js?v=2026112303';
-import { compressImage, readReceipt } from './receipt.js?v=2026112303';
+import { GraphStore } from './store-graph.js?v=2026112304';
+import { DemoStore } from './store-demo.js?v=2026112304';
+import { compressImage, readReceipt } from './receipt.js?v=2026112304';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
 const TABLES = ['Projects', 'Clients', 'Workers', 'Categories', 'Tasks', 'Expenses', 'Mileage', 'Invoices', 'Disbursements'];
-const OPTIONAL_TABLES = ['Status', 'Table12']; // drop-down lists; the app has defaults if they're missing
+const OPTIONAL_TABLES = ['Status', 'Table12', 'ChangeLog']; // drop-down lists; the app has defaults if they're missing
 const loadEverything = () => store.loadAll(TABLES).then(() => Promise.allSettled(OPTIONAL_TABLES.map(t => store.loadTable(t))));
 
 // ---------- small utilities ----------
@@ -47,10 +47,37 @@ function toast(msg, kind = 'ok', ms = 4500) {
   $('#toasts').appendChild(t);
   setTimeout(() => t.remove(), ms);
 }
+// Every change goes in two places: this device's own list, and (once Settings has
+// added the ChangeLog table) a shared list in the workbook that everyone sees.
+// The shared write is best effort: it never delays or fails a save. Rows that
+// couldn't be sent wait in a queue on the device and go with the next write.
 function logActivity(action, address, detail = '') {
   const log = ls.get('log', []);
   log.unshift({ when: new Date().toISOString(), action, address, detail });
   ls.set('log', log.slice(0, 100));
+  if (store.file && store.tables.ChangeLog) {
+    const q = ls.get('logQueue', []);
+    q.push({ id: Date.now() + Math.random(), wb: CFG.fileShareUrl, row: [stamp(), me || user?.name || '', action, address || '', detail || ''] });
+    ls.set('logQueue', q);
+    flushSharedLog();
+  }
+}
+const stamp = () => { const d = new Date(); return `${todayISO()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+let flushing = false;
+async function flushSharedLog() {
+  if (flushing) return;
+  flushing = true;
+  try {
+    // let a save that is still in progress finish before adding to the workbook
+    for (let i = 0; $('#busy')?.hidden === false && i < 40; i++) await new Promise(r => setTimeout(r, 250));
+    for (;;) {
+      const mine = ls.get('logQueue', []).filter(q => q.wb === CFG.fileShareUrl);   // only this workbook's entries
+      if (!mine.length || !store.file || !store.tables.ChangeLog) break;
+      try { await store.addRows('ChangeLog', mine.map(q => q.row)); } catch { break; }
+      const sent = new Set(mine.map(q => q.id));
+      ls.set('logQueue', ls.get('logQueue', []).filter(q => !sent.has(q.id)));
+    }
+  } finally { flushing = false; }
 }
 async function busy(label, fn) {
   const b = $('#busy');
@@ -192,6 +219,7 @@ async function connect({ quiet = false } = {}) {
   paintChip();
   route();
   if (!me) askWhoYouAre();
+  flushSharedLog();
   const j = ls.get('pendingInvoice', null);
   if (j && (!j.wb || j.wb === CFG.fileShareUrl)) toast(`<b>${esc(j.number)} is only partly recorded.</b> Open <a href="#/invoices">Invoices</a> and press Resume.`, 'warn', 15000);
   return true;
@@ -390,7 +418,9 @@ function viewDashboard(view) {
   const expYr = rows('Expenses').filter(e => toISO(e.Date).startsWith(yr));
   const expTot = expYr.reduce((s, e) => s + num(e['Bus Total']), 0);
   const kmYr = rows('Mileage').filter(m => toISO(m.Date).startsWith(yr)).reduce((s, m) => s + num(m.km), 0);
-  const log = ls.get('log', []).slice(0, 8);
+  const deviceLog = ls.get('log', []).slice(0, 8).map(l => ({ action: l.action, address: l.address, who: '', when: new Date(l.when).toLocaleString('en-CA'), detail: l.detail }));
+  const shared = store.tables.ChangeLog ? rows('ChangeLog').slice(-8).reverse().map(r => ({ action: r.Action, address: r.Where, who: r.Who, when: r.When, detail: r.Detail })) : null;
+  const log = shared || deviceLog;
 
   view.innerHTML = `
     <div class="page-head"><h1>Hello${firstName(me || user.name) ? ', ' + esc(firstName(me || user.name)) : ''}</h1><p class="muted">${longDate(todayISO())}</p></div>
@@ -418,9 +448,10 @@ function viewDashboard(view) {
           : '<p class="muted">Nothing waiting to be invoiced.</p>'}
       </div>
       <div class="card">
-        <h2>Recent changes made from this device</h2>
-        ${log.length ? `<ul class="log">${log.map(l => `<li><b>${esc(l.action)}</b> <code>${esc(l.address)}</code><br><small class="muted">${new Date(l.when).toLocaleString('en-CA')} ${esc(l.detail)}</small></li>`).join('')}</ul>`
+        <h2>${shared ? 'Recent changes' : 'Recent changes made from this device'}</h2>
+        ${log.length ? `<ul class="log">${log.map(l => `<li><b>${esc(l.action)}</b> ${l.address ? `<code>${esc(l.address)}</code>` : ''}<br><small class="muted">${esc(l.when)}${l.who ? ' · ' + esc(l.who) : ''} ${esc(l.detail)}</small></li>`).join('')}</ul>`
           : '<p class="muted">Every row the app writes shows up here with its exact sheet and cell address.</p>'}
+        ${shared ? '' : '<p class="small muted">Turn on the shared change log in <a href="#/settings">Settings</a> to see what everyone changes, from any device.</p>'}
       </div>
     </div>`;
   $$('[data-client]', view).forEach(a => a.onclick = () => ls.set('invClient', a.dataset.client));
@@ -1069,6 +1100,7 @@ function viewInvoices(view, sub) {
       if (await preInvoiceCheck(client, date, fresh, 'print')) {
         // Remember what was printed, so Record can tell if the invoice changed afterwards
         ls.set('printed:' + fresh.number, { total: fresh.total, when: new Date().toISOString(), tasks: fresh.tasks.map(taskSig), disb: fresh.disb.map(d => disbSig(d.row)) });
+        logActivity('Printed invoice', '', `${fresh.number} · ${money(fresh.total)}`);
         printInvoice(fresh);
       }
     };
@@ -1576,7 +1608,10 @@ async function viewExpenseReport(view) {
         <button class="btn" id="r-print">Print / Save PDF</button>
         ${n || m ? `<button class="btn primary" id="r-paid">Mark as reimbursed…</button>` : ''}
       </div>`;
-    $('#r-print').onclick = () => printDoc(reportHTML(r), `Expense report ${o.worker} ${o.to}`);
+    $('#r-print').onclick = () => {
+      logActivity('Printed expense report', '', `${o.worker} · ${o.from} to ${o.to} · ${money(r.total)}`);
+      printDoc(reportHTML(r), `Expense report ${o.worker} ${o.to}`);
+    };
     if ($('#r-paid')) $('#r-paid').onclick = async () => {
       if (!confirm(`Mark this report as reimbursed?\n\n• Sets Paid = TRUE on ${n} expense${n === 1 ? '' : 's'}\n• Sets PD Paid = TRUE on ${m} trip${m === 1 ? '' : 's'}${r.mileage.length ? '\n\nThe Mileage table has no paid flag for the km allowance, so nothing is changed for it.' : ''}`)) return;
       await busy('Updating…', async () => {
@@ -1722,6 +1757,14 @@ function trackingCard() {
       </div>
     </div>`;
 }
+function logCard() {
+  const on = !!store.tables.ChangeLog;
+  return `<div class="card" id="logcard" style="margin-top:1rem">
+    <h2>Shared change log</h2>
+    <p class="small muted">Records every change made through the app (who, when, what, and which sheet row) on a <b>ChangeLog</b> sheet in the workbook, so everyone sees the same history from any device and you can read it in Excel. It also feeds the dashboard's "days since last expense report".</p>
+    <div class="actions">${on ? `<span class="small muted">✓ On · ${rows('ChangeLog').length} entries so far</span>` : '<button class="btn primary" id="addlog">Add change log to this workbook</button>'}</div>
+  </div>`;
+}
 function wireTracking(view) {
   const name = cfg().invoiceLinkColumn;
   const add = $('#addcol', view);
@@ -1782,8 +1825,15 @@ function viewSettings(view) {
         </ul>
       </div>
     </div>
-    ${store.file ? trackingCard() : ''}`;
+    ${store.file ? trackingCard() + logCard() : ''}`;
   wireTracking(view);
+  if ($('#addlog')) $('#addlog').onclick = async () => {
+    if (!confirm('Excel will add a new sheet named "ChangeLog" with a table of the same name (When, Who, Action, Where, Detail) to this workbook. Nothing else in the workbook changes.\n\nAdd it?')) return;
+    await busy('Adding the change log…', () => store.createTable('ChangeLog', 'ChangeLog', ['When', 'Who', 'Action', 'Where', 'Detail']));
+    logActivity('Added shared change log', 'ChangeLog', store.file.name);
+    toast('The shared change log is on. Every change made through the app is now recorded in the workbook.', 'ok', 7000);
+    viewSettings(view);
+  };
   $$('input.nick', view).forEach(i => i.onchange = () => {
     const list = books(), w = list.find(x => x.id === i.dataset.id);
     if (!w) return;

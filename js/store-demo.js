@@ -1,6 +1,6 @@
 // In-memory store with made-up sample data, same interface as GraphStore.
 // Lets you try the app (?demo) without Microsoft sign-in. Nothing is saved.
-import { parseTable, rowAddress } from './store-graph.js?v=2026112303';
+import { parseTable, rowAddress } from './store-graph.js?v=2026112304';
 
 const today = new Date();
 const serial = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
@@ -18,6 +18,7 @@ const HEAD = {
   Categories: ['CRA Categories', 'Total', 'Bus Total', 'Examples'],
   Status: ['Status'],
   Table12: ['Type'],
+  ChangeLog: ['When', 'Who', 'Action', 'Where', 'Detail'],
 };
 const SHEET = { Tasks: 'Time', Categories: 'Expenses', Status: 'Projects', Table12: 'Projects' };
 const RANGES = {
@@ -93,7 +94,8 @@ export class DemoStore {
     if (/fail/.test(url)) throw new Error('Demo: that workbook cannot be opened');
     const year = (/(20\d\d)/.exec(url) || [])[1];
     const other = year && year !== '2026';
-    this.data = seed();
+    this.data = seed();                 // the demo's ChangeLog table does not exist until Settings adds it
+    this.tables = {};
     if (other) for (const t of ['Tasks', 'Expenses', 'Mileage', 'Invoices', 'Disbursements']) this.data[t] = [];
     this.file = { name: other ? `Bookkeeping ${year} DEMO.xlsx` : 'Bookkeeping DEMO.xlsx', webUrl: '#', driveId: 'demo', itemId: 'demo-' + (year || '2026') };
     // Pretend we are the company itself
@@ -174,6 +176,11 @@ export class DemoStore {
     this.data[name].forEach(r => { r.length = HEAD[name].length - 1; r.push(''); });
     await this.loadTable(name);
   }
+  async createTable(name, sheet, headers) {
+    HEAD[name] = headers; SHEET[name] = sheet; this.data[name] = [];
+    return this.loadTable(name);
+  }
+  async addRows(name, rowsToAdd) { this.data[name].push(...rowsToAdd.map(r => [...r])); }
   async readRange(ref) { return RANGES[ref] || []; }
   async uploadFile(blob, fileName) { return { name: fileName, webUrl: URL.createObjectURL(blob) }; }
 }
