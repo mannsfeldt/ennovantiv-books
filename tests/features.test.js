@@ -165,3 +165,59 @@ test('projects: the list runs from most recently used to least, with new project
   assert(!groups.some(g => /Northwind|Contoso/.test(g.group)), 'no client groups');
   equal(groups[1].items, ['Arc Flash Review'], 'opportunities stay in their own group at the end');
 }));
+
+// ---- repeat and favourites (time) ----
+async function seedHistory(app) {
+  app.store.data.Tasks = [];
+  const log = (project, task, hours, daysAgo, worker = 'Demo User') => app.store.addRow('Tasks', { Date: daysAgoSerial(daysAgo), Project: project, Hours: hours, Task: task, Worker: worker, Billable: true, Invoiced: false, Paid: false });
+  await log('Feeder Study', 'Report writing', 3, 9); await log('Feeder Study', 'Report writing', 2, 4); await log('Feeder Study', 'report writing', 2.5, 1);
+  await log('Substation Upgrade', 'SLD revisions', 1.5, 2);
+  await log('Hospital Generator', 'Site visit', 6, 0, 'Alex Helper');           // someone else's favourite is not mine
+  await app.store.loadAll(['Projects', 'Tasks']);
+  await app.go('/dashboard'); await app.go('/time');
+}
+const chips = app => app.$$('#quick .chip');
+
+test('repeat: quick-add chips offer my most used project and task pairs, most used first', withApp('/dashboard', async app => {
+  await seedHistory(app);
+  const labels = chips(app).map(c => c.textContent.replace(/\s+/g, ' ').trim());
+  equal(labels.length, 2, 'two pairs, not the other person\'s');
+  assert(/Feeder Study/.test(labels[0]) && /Report writing/i.test(labels[0]), `most used first: ${labels[0]}`);
+  assert(/Substation Upgrade/.test(labels[1]), labels[1]);
+}));
+
+test('repeat: tapping a chip fills the form from the latest time that pair was logged', withApp('/dashboard', async app => {
+  await seedHistory(app);
+  chips(app)[0].click(); await sleep(60);
+  const f = app.form().elements;
+  equal([f.Project.value, f.Task.value, f.Hours.value], ['Feeder Study', 'report writing', '2.5'], 'project, the latest wording of the task, and the latest hours');
+  assert(/remaining/.test(app.$('#budget').textContent), 'the budget panel updates too');
+  await app.save();
+  const row = app.rows('Tasks').at(-1);
+  equal([row.Project, row.Task, row.Hours, row.Billable], ['Feeder Study', 'report writing', 2.5, true], 'one more tap saves it');
+}));
+
+test('repeat: no chips while editing an entry', withApp('/dashboard', async app => {
+  await seedHistory(app);
+  await app.showAll();
+  await app.edit('Tasks', app.rows('Tasks')[0]);
+  equal(chips(app).length, 0);
+}));
+
+test('repeat: a project that is no longer open is not offered', withApp('/dashboard', async app => {
+  await seedHistory(app);
+  const i = app.rows('Projects').findIndex(p => p.Name === 'Feeder Study');
+  await app.poke('Projects', i, 'Status', 'Lost');
+  await app.go('/dashboard'); await app.go('/time');
+  equal(chips(app).map(c => c.textContent).filter(t => /Feeder/.test(t)).length, 0);
+}));
+
+test('repeat: the Repeat button on a list row copies it into the form, dated today, without opening it for edit', withApp('/dashboard', async app => {
+  await seedHistory(app);
+  await app.showAll();
+  const row = app.rows('Tasks').find(r => r.Project === 'Substation Upgrade');
+  app.$(`[data-repeat="${row._row}"]`).click(); await sleep(60);
+  const f = app.form().elements;
+  equal([f.Project.value, f.Task.value, f.Hours.value, f.Date.value], ['Substation Upgrade', 'SLD revisions', '1.5', localISO()]);
+  assert(/Log time/.test(app.$('#entry h2').textContent), 'still the new-entry form, not an edit');
+}));

@@ -282,3 +282,10 @@ button.filechip { background: none; font: inherit; font-size: .82rem; cursor: po
 .wb-list input.nick { min-height: 36px; padding: .3rem .5rem; font-size: 14px; }
 a.stat { text-decoration: none; color: inherit; }
 a.stat:hover { border-color: var(--blue); }
+
+/* quick-add chips */
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-bottom: 1rem; }
+.chips-label { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); width: 100%; }
+.chip { display: inline-flex; flex-direction: column; align-items: flex-start; text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: .4rem .65rem; font: inherit; font-size: .86rem; font-weight: 500; color: var(--navy); cursor: pointer; max-width: 100%; }
+.chip small { font-weight: 400; color: var(--muted); font-size: .76rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip:hover { border-color: var(--blue); background: #F6F8FC; }

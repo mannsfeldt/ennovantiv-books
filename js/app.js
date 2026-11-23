@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112306';
-import { DemoStore } from './store-demo.js?v=2026112306';
-import { compressImage, readReceipt } from './receipt.js?v=2026112306';
+import { GraphStore } from './store-graph.js?v=2026112307';
+import { DemoStore } from './store-demo.js?v=2026112307';
+import { compressImage, readReceipt } from './receipt.js?v=2026112307';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -508,6 +508,39 @@ const distinct = (table, col, filter = () => true) => {
   return [...seen.values()].slice(0, 60);
 };
 
+// My most used project + task pairs from recent time, for one-tap entry. The hours
+// come from the latest time that pair was logged; closed projects are left out.
+function quickPairs() {
+  const recent = rows('Tasks').filter(t => t.Worker === me && clean(t.Task))
+    .sort((a, b) => num(b.Date) - num(a.Date) || b._row - a._row).slice(0, 80);
+  const open = new Set(projectOptions(false).flatMap(g => g.items));
+  const pairs = new Map();
+  for (const t of recent) {
+    if (!open.has(t.Project)) continue;
+    const k = t.Project + '\u0000' + clean(t.Task).toLowerCase();
+    const e = pairs.get(k) || { Project: t.Project, Task: clean(t.Task), Hours: t.Hours, n: 0, last: num(t.Date) };   // first seen = most recent
+    e.n++; pairs.set(k, e);
+  }
+  return [...pairs.values()].sort((a, b) => b.n - a.n || b.last - a.last).slice(0, 6);
+}
+function quickAddHTML() {
+  const pairs = quickPairs();
+  return pairs.length ? `<div class="chips" id="quick"><span class="chips-label">Quick add</span>${pairs.map((p, i) =>
+    `<button type="button" class="chip" data-i="${i}" title="${esc(p.Project)} · ${esc(p.Task)} · ${hrs(p.Hours)} h">${esc(p.Project)}<small>${esc(p.Task)}</small></button>`).join('')}</div>` : '';
+}
+function fillTimeForm(form, e, { today = false, billable } = {}) {
+  const f = form.elements;
+  if (![...f.Project.options].some(o => o.value === e.Project)) return toast(`<b>${esc(e.Project)}</b> isn't open for new time any more.`, 'warn', 6000);
+  f.Project.value = e.Project;
+  f.Project.dispatchEvent(new Event('change'));       // refreshes Billable, task suggestions and the budget
+  f.Task.value = e.Task;
+  f.Hours.value = e.Hours === '' ? '' : e.Hours;
+  if (today) f.Date.value = todayISO();
+  if (billable !== undefined) f.Billable.checked = billable;
+  f.Hours.dispatchEvent(new Event('input'));          // budget preview with these hours
+  f.Hours.focus(); f.Hours.select?.();
+}
+
 const TIME = {
   key: 'time', table: 'Tasks', title: 'Time', addLabel: 'Log time', noun: 'time entry', defPeriod: 'week',
   headActions: '<a class="btn" href="#/projects/time">+ New project</a>',
@@ -529,9 +562,12 @@ const TIME = {
     { label: 'Worker', get: r => esc(String(r.Worker).split(' ')[0]), cls: 'hide-sm' },
     { label: 'Invoice', cls: 'hide-sm', get: r => timeStatus(r) },
     { label: 'Hours', get: r => hrs(r.Hours), cls: 'r' },
+    { label: '', cls: 'r', get: r => `<button type="button" class="btn sm" data-repeat="${r._row}" title="Log the same again, dated today">Repeat</button>` },
   ],
   summary: (shown) => `${hrs(shown.reduce((s, r) => s + num(r.Hours), 0))} h`,
   filterCol: 'Project',
+  top: editing => editing ? '' : quickAddHTML(),
+  repeat: (form, r) => fillTimeForm(form, { Project: r.Project, Task: r.Task, Hours: r.Hours }, { today: true, billable: r.Billable === true }),
   // Values that are almost always typing mistakes: ask, don't block
   check: v => v.Hours <= 0 ? [`Hours is ${v.Hours}.`] : v.Hours > 16 ? [`${v.Hours} hours in one entry is more than 16 (did you mean ${v.Hours / 10}?).`] : [],
   // An invoiced entry is part of an invoice that has gone out. Changing what was
@@ -582,6 +618,8 @@ const TIME = {
       $('#budget').innerHTML = budgetHTML(p, bill.checked ? num(form.elements.Hours.value) - counted : -counted);
     };
     proj.onchange = () => { setBillable(); setList(); paintBudget(); };
+    const pairs = quickPairs();
+    $$('#quick .chip', form).forEach(c => c.onclick = () => fillTimeForm(form, pairs[Number(c.dataset.i)]));
     form.elements.Hours.oninput = paintBudget;
     bill.onchange = paintBudget;
     const pick = !editing && ls.get('pickProject', '');
@@ -792,7 +830,7 @@ function viewEntry(spec, view = $('#view'), editing = null) {
     <div class="grid2 entry">
       <form class="card form ${editing ? 'editing' : ''}" id="entry" novalidate>
         <h2>${editing ? `Edit ${spec.noun} <span class="muted small">· ${esc(t.sheet)} row ${editing._row}</span>` : spec.addLabel}</h2>
-        ${spec.top ? spec.top() : ''}
+        ${spec.top ? spec.top(editing) : ''}
         ${main.map(f => fieldHTML(f, editing)).join('')}
         <div class="checks">${checks.map(f => fieldHTML(f, editing)).join('')}</div>
         ${Object.entries(groups).map(([g, fs]) => `<details class="group" ${fs.some(f => editing?.[f.col]) ? 'open' : ''}><summary>${g}</summary><div class="checks">${fs.map(f => fieldHTML(f, editing)).join('')}</div></details>`).join('')}
@@ -849,6 +887,13 @@ function viewEntry(spec, view = $('#view'), editing = null) {
       <tbody>${shown.slice(0, 300).map(r => `<tr data-row="${r._row}" class="${editing?._row === r._row ? 'sel' : ''}" title="${esc(t.sheet)} row ${r._row}">${spec.list.map(c => `<td class="${c.cls || ''}">${c.get(r)}</td>`).join('')}</tr>`).join('')}</tbody></table>
       ${shown.length > 300 ? '<p class="small muted">Showing the 300 most recent. Use search or the period filter.</p>' : ''}`
       : '<p class="muted">No entries for this period.</p>';
+    $$('#listwrap [data-repeat]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();                              // don't open the row for editing
+      const r = rows(spec.table).find(x => x._row === Number(b.dataset.repeat));
+      if (editing) viewEntry(spec, view);               // leave edit mode: a repeat is a new entry
+      spec.repeat($('#entry'), r);
+      $('#entry').scrollIntoView({ behavior: 'smooth' });
+    });
     $$('#listwrap tr[data-row]').forEach(tr => tr.onclick = () => {
       const r = rows(spec.table).find(x => x._row === Number(tr.dataset.row));
       viewEntry(spec, view, r);
