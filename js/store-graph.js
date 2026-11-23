@@ -85,7 +85,11 @@ export class GraphStore {
       let payload = body;
       if (body && !(body instanceof Blob)) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
       const r = await fetch(url, { method, headers, body: payload });
-      if (r.ok) return r.status === 204 ? null : r.json();
+      if (r.ok) {
+        if (r.status === 204) return null;
+        const body = await r.text();            // e.g. 202 Accepted has no body
+        return body ? JSON.parse(body) : null;
+      }
 
       const text = await r.text();
       // 429 means throttled before anything happened, so repeating is always safe.
@@ -113,19 +117,49 @@ export class GraphStore {
   wbApi(method, path, body, opts = {}) { return this.api(method, this.wb + path, body, { workbook: true, ...opts }); }
 
   // ---------- file ----------
-  async openFile(shareUrl) {
+  static fileFrom(item) {
+    return { driveId: item.parentReference.driveId, itemId: item.id, parentId: item.parentReference.id, name: item.name, webUrl: item.webUrl };
+  }
+  async lookupShare(shareUrl) {
     if (!shareUrl) throw new Error('No workbook link configured. Add it in Settings.');
     const enc = 'u!' + btoa(unescape(encodeURIComponent(shareUrl.trim())))
       .replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
-    const item = await this.api('GET', `/shares/${enc}/driveItem?$select=id,name,webUrl,parentReference`);
+    return this.api('GET', `/shares/${enc}/driveItem?$select=id,name,webUrl,parentReference`);
+  }
+  // A second, independent store on another workbook file, using this one's sign-in.
+  // Used to read or write a different year's workbook without touching this one.
+  async openItem(item) {
+    const other = new GraphStore(this.cfg, this.schema);
+    other.token = () => this.token();
+    other.file = GraphStore.fileFrom(item);
+    await other.createSession();
+    return other;
+  }
+  openByUrl(shareUrl) { return this.lookupShare(shareUrl).then(item => this.openItem(item)); }
+
+  // Copy this workbook's file into the same folder under a new name. Graph copies
+  // asynchronously (it answers 202 and the file appears later), so look for the
+  // new file by name until it is there. Never overwrites: a file already called
+  // that is an error.
+  async copyFile(newName, { waitMs = 120000, pollMs = 1500 } = {}) {
+    const f = this.file, dir = `/drives/${f.driveId}/items/${f.parentId}`;
+    const lookup = () => this.api('GET', `${dir}:/${encodeURIComponent(newName)}?$select=id,name,webUrl,parentReference`);
+    let existing = null;
+    try { existing = await lookup(); } catch (e) { if (e.status !== 404) throw e; }
+    if (existing) throw Object.assign(new Error(`A file named "${newName}" already exists in that folder.`), { exists: true, item: existing });
+    await this.api('POST', `/drives/${f.driveId}/items/${f.itemId}/copy`, { parentReference: { driveId: f.driveId, id: f.parentId }, name: newName }, { once: true });
+    const t0 = Date.now();
+    for (;;) {
+      await new Promise(r => setTimeout(r, pollMs));
+      try { return await lookup(); } catch (e) { if (e.status !== 404) throw e; }
+      if (Date.now() - t0 > waitMs) throw new Error(`The copy "${newName}" did not appear within ${Math.round(waitMs / 1000)} seconds. It may still be on its way: check the folder in SharePoint before trying again.`);
+    }
+  }
+
+  async openFile(shareUrl) {
+    const item = await this.lookupShare(shareUrl);
     this.tables = {};   // nothing from a previously open workbook may linger
-    this.file = {
-      driveId: item.parentReference.driveId,
-      itemId: item.id,
-      parentId: item.parentReference.id,
-      name: item.name,
-      webUrl: item.webUrl,
-    };
+    this.file = GraphStore.fileFrom(item);
     await this.createSession();
     return this.file;
   }
@@ -174,8 +208,20 @@ export class GraphStore {
     if (!same) throw new Error(`Row ${row._row} of "${t.sheet}" changed in Excel since it was loaded. Refresh and try again.`);
   }
 
+  // A row with nothing in any column you type into. Formula columns don't count:
+  // in an empty row they show errors or zeros.
+  isBlank(tableName, row) {
+    const comp = this.schema[tableName]?.computed || [];
+    return this.tables[tableName].headers.every((h, i) => comp.includes(h) || row._raw[i] === '' || row._raw[i] === null);
+  }
+
   async addRow(tableName, obj) {
     let t = this.tables[tableName] || await this.loadTable(tableName);
+    if (t.rows.length === 1 && this.isBlank(tableName, t.rows[0])) {
+      // Excel keeps one blank row in an emptied table: fill it, rather than adding a row below it
+      await this.updateRow(tableName, t.rows[0], obj);
+      return { sheet: t.sheet, row: t.startRow + 1, address: `${t.sheet}!${rowAddress(t, t.startRow + 1)}` };
+    }
     const values = t.headers.map(h => (h in obj ? obj[h] : null));
     let res;
     try {
@@ -315,6 +361,19 @@ export class GraphStore {
     if (t.headers.includes(name)) return;
     await this.wbApi('POST', `/tables('${encodeURIComponent(tableName)}')/columns/add`, { index: null, values: [[name], ...t.rows.map(() => [''])] }, { once: true });
     await this.loadTable(tableName);
+  }
+
+  // Empty a table: delete its data rows (never the header), leaving the one blank
+  // row Excel always keeps. Only ever runs against the workbook the caller names by
+  // id, so it cannot be pointed at the wrong file by mistake. Returns the number of rows removed.
+  async clearTable(tableName, { expectItemId } = {}) {
+    if (!expectItemId || this.file.itemId !== expectItemId) throw new Error('Refusing to empty a table: this is not the workbook that was just created.');
+    const t = await this.loadTable(tableName);
+    if (t.rows.every(r => this.isBlank(tableName, r))) return 0;
+    const body = `${colName(t.startCol)}${t.startRow + 1}:${colName(t.startCol + t.headers.length - 1)}${t.startRow + t.rows.length}`;
+    await this.wbApi('POST', this.rangeApi(t.sheet, body) + '/delete', { shift: 'Up' }, { once: true });
+    await this.loadTable(tableName);
+    return t.rows.length;
   }
 
   // Add several rows to a table in one request, without re-reading it. Used for the

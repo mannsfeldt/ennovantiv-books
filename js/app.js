@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026112311';
-import { DemoStore } from './store-demo.js?v=2026112311';
-import { compressImage, readReceipt } from './receipt.js?v=2026112311';
+import { GraphStore } from './store-graph.js?v=2026112312';
+import { DemoStore } from './store-demo.js?v=2026112312';
+import { compressImage, readReceipt } from './receipt.js?v=2026112312';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');

@@ -1,5 +1,6 @@
 import { tests } from './harness.js';
 import './store-graph.test.js';
+import './store-rollover.test.js';
 import './app.test.js';
 import './workbooks.test.js';
 import './features.test.js';
