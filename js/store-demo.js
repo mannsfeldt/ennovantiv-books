@@ -1,6 +1,6 @@
 // In-memory store with made-up sample data, same interface as GraphStore.
 // Lets you try the app (?demo) without Microsoft sign-in. Nothing is saved.
-import { parseTable, rowAddress } from './store-graph.js?v=2026111009';
+import { parseTable, rowAddress } from './store-graph.js?v=2026112301';
 
 const today = new Date();
 const serial = (d) => Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / 864e5);
@@ -82,7 +82,11 @@ function seed() {
 
 export class DemoStore {
   constructor(cfg, schema) { this.cfg = cfg; this.schema = schema; this.tables = {}; this.data = seed(); }
-  async init() { return { name: 'Demo User', email: 'demo@example.com' }; }
+  // ?as=Name&email=… lets the tests (and a demo) sign in as someone else
+  async init() {
+    const q = new URLSearchParams(location.search);
+    return { name: q.get('as') || 'Demo User', email: (q.get('email') || 'demo@example.com').toLowerCase() };
+  }
   login() {} logout() { location.href = location.pathname; }
   async openFile() {
     this.file = { name: 'Bookkeeping DEMO.xlsx', webUrl: '#' };

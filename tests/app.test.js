@@ -3,11 +3,11 @@
 import { test, assert, equal, until, sleep } from './harness.js';
 
 // A fresh copy of the app for each test, so sample data never leaks between tests.
-export async function openApp(hash = '/dashboard') {
-  for (const k of Object.keys(localStorage)) if (/^books:(pendingInvoice|printed:)/.test(k)) localStorage.removeItem(k);
+export async function openApp(hash = '/dashboard', query = '') {
+  for (const k of Object.keys(localStorage)) if (/^books:(pendingInvoice|printed:|whoami:)/.test(k)) localStorage.removeItem(k);
   const frame = document.createElement('iframe');
   frame.style.cssText = 'width:1200px;height:900px;border:0;position:absolute;left:-9999px;top:0';
-  frame.src = `../index.html?demo&t=${Date.now()}#${hash}`;
+  frame.src = `../index.html?demo&t=${Date.now()}${query}#${hash}`;
   document.body.appendChild(frame);
   const win = await until(() => frame.contentWindow?.demoStore?.tables?.Tasks && frame.contentDocument.querySelector('#view')?.children.length && frame.contentWindow, 10000, 'the app to load');
   const doc = win.document, store = win.demoStore;
@@ -39,7 +39,8 @@ export async function openApp(hash = '/dashboard') {
   return app;
 }
 // run a test with an app that is always cleaned up
-export const withApp = (hash, fn) => async () => { const app = await openApp(hash); try { await fn(app); } finally { app.close(); } };
+export const withApp = (hash, fn, query = '') => async () => { const app = await openApp(hash, query); try { await fn(app); } finally { app.close(); } };
+const asUser = (name, email) => `&as=${encodeURIComponent(name)}&email=${encodeURIComponent(email)}`;
 
 test('app: logging time adds one row to the Tasks table', withApp('/time', async app => {
   const before = app.rows('Tasks').length;
@@ -374,3 +375,38 @@ test('A-09: the dashboard warns when the connected workbook is for another year'
 test('A-09: entry screens name the workbook they write to', withApp('/time', async app => {
   assert(app.$('#entry .dest').textContent.includes(app.store.file.name), 'workbook name shown on the form');
 }));
+
+
+// ---- who is signed in ----
+test('who: a sign-in address that is not in the Workers table is matched by name, not guessed as the first worker', withApp('/dashboard', async app => {
+  equal(app.$('.page-head h1').textContent, 'Hello, Alex');
+  await app.go('/time');
+  equal(app.form().elements.Worker.value, 'Alex Helper', 'time entries default to the signed-in person');
+}, asUser('Alex Helper', 'alex.helper@ennovantiv.com')));
+
+test('who: a "Last, First" display name is matched too', withApp('/dashboard', async app => {
+  equal(app.$('.page-head h1').textContent, 'Hello, Alex');
+}, asUser('Helper, Alex', 'alex.helper@ennovantiv.com')));
+
+test('who: an unknown person is asked who they are instead of being treated as the first worker', withApp('/dashboard', async app => {
+  const dlg = await until(() => app.$('dialog.modal'), 6000, 'the "Who are you?" question');
+  assert(/who are you/i.test(dlg.textContent), 'asks who they are');
+  assert(app.$('.page-head h1').textContent !== 'Hello, Demo', 'not greeted as the first worker');
+  dlg.querySelector('select[name=worker]').value = 'Alex Helper';
+  dlg.querySelector('button[value=ok]').click(); await sleep(150);
+  equal(app.$('.page-head h1').textContent, 'Hello, Alex');
+  equal(JSON.parse(localStorage.getItem('books:whoami:pat@ennovantiv.com')), 'Alex Helper', 'remembered for next time');
+}, asUser('Pat Newcomer', 'pat@ennovantiv.com')));
+
+test('who: a worker found by email is unchanged', withApp('/dashboard', async app => {
+  equal(app.$('.page-head h1').textContent, 'Hello, Demo');
+  assert(!app.$('dialog.modal'), 'no question asked');
+}));
+
+test('who: another person\'s remembered Worker on a shared device is not applied', async () => {
+  localStorage.setItem('books:sticky:time', JSON.stringify({ Worker: 'Demo User' }));                          // the old, per-device memory
+  localStorage.setItem('books:sticky:time:demo@example.com', JSON.stringify({ Worker: 'Demo User' }));        // David's, under his own address
+  const app = await openApp('/time', asUser('Alex Helper', 'alex.helper@ennovantiv.com'));
+  try { equal(app.form().elements.Worker.value, 'Alex Helper'); }
+  finally { app.close(); localStorage.removeItem('books:sticky:time'); localStorage.removeItem('books:sticky:time:demo@example.com'); }
+});

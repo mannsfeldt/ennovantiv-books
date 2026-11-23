@@ -1,6 +1,6 @@
-import { GraphStore } from './store-graph.js?v=2026111009';
-import { DemoStore } from './store-demo.js?v=2026111009';
-import { compressImage, readReceipt } from './receipt.js?v=2026111009';
+import { GraphStore } from './store-graph.js?v=2026112301';
+import { DemoStore } from './store-demo.js?v=2026112301';
+import { compressImage, readReceipt } from './receipt.js?v=2026112301';
 
 const SCHEMA = window.BOOKS_SCHEMA;
 const DEMO = new URLSearchParams(location.search).has('demo');
@@ -98,12 +98,49 @@ async function connect() {
     location.hash = '#/settings';
     return route();
   }
-  me = rows('Workers').find(w => clean(w.email).toLowerCase() === user.email)?.Name || rows('Workers')[0]?.Name || '';
+  me = identifyWorker();
   $('#filechip').innerHTML = `<span class="dot"></span>${esc(store.file.name)}`;
   $('#filechip').href = store.file.webUrl;
   route();
+  if (!me) askWhoYouAre();
   const j = ls.get('pendingInvoice', null);
   if (j) toast(`<b>${esc(j.number)} is only partly recorded.</b> Open <a href="#/invoices">Invoices</a> and press Resume.`, 'warn', 15000);
+}
+
+// Which row of the Workers table is the person signed in? Never guess: the
+// first worker used to be assumed, which greeted everyone as David and filled
+// in David as the worker on their time entries.
+//   1. a choice made on this device (the question below)
+//   2. the sign-in address matches the Workers email column
+//   3. the Microsoft display name matches the worker's name ("Shari Mannsfeldt"
+//      or "Mannsfeldt, Shari"), as long as exactly one worker fits
+const nameWords = s => clean(s).toLowerCase().replace(/[^\p{L} ]/gu, ' ').split(/\s+/).filter(Boolean);
+function identifyWorker() {
+  const workers = rows('Workers');
+  const saved = ls.get('whoami:' + user.email, '');
+  if (saved && workers.some(w => w.Name === saved)) return saved;
+  const byEmail = workers.find(w => clean(w.email).toLowerCase() === user.email);
+  if (byEmail) return byEmail.Name;
+  const mine = nameWords(user.name);
+  const byName = workers.filter(w => {
+    const theirs = nameWords(w.Name), [small, big] = theirs.length <= mine.length ? [theirs, mine] : [mine, theirs];
+    return small.length >= 2 && small.every(x => big.includes(x));
+  });
+  return byName.length === 1 ? byName[0].Name : '';
+}
+const firstName = s => { const t = clean(s); return (t.includes(',') ? t.split(',')[1] : t).trim().split(/\s+/)[0] || ''; };
+
+async function askWhoYouAre() {
+  const data = await modal(`
+    <h2>Who are you?</h2>
+    <p class="small muted">You're signed in as ${esc(user.name)} (${esc(user.email)}), which doesn't match anyone in the Workers table. Pick yourself so your time and expenses are filed under the right name. This device will remember your choice.</p>
+    <div class="field"><label for="who">I am</label><select id="who" name="worker" required><option value="">Choose…</option>${rows('Workers').map(w => `<option>${esc(w.Name)}</option>`).join('')}</select></div>
+    <div class="actions"><button class="btn" value="cancel" formnovalidate>Not now</button><button class="btn primary" value="ok">This is me</button></div>`);
+  const pick = data?.get('worker');
+  if (!pick) return;
+  ls.set('whoami:' + user.email, pick);
+  me = pick;
+  route();
 }
 
 async function refresh() {
@@ -264,7 +301,7 @@ function viewDashboard(view) {
   const log = ls.get('log', []).slice(0, 8);
 
   view.innerHTML = `
-    <div class="page-head"><h1>Hello${me ? ', ' + esc(me.split(' ')[0]) : ''}</h1><p class="muted">${longDate(todayISO())}</p></div>
+    <div class="page-head"><h1>Hello${firstName(me || user.name) ? ', ' + esc(firstName(me || user.name)) : ''}</h1><p class="muted">${longDate(todayISO())}</p></div>
     ${workbookYear() && workbookYear() !== yr ? `<p class="warnbox">It is ${yr}, but this device is connected to <b>${esc(store.file.name)}</b>, the ${workbookYear()} workbook. New entries would go into that file. Paste the ${yr} workbook's link in <a href="#/settings">Settings</a>.</p>` : ''}
     <div class="quick">
       <a class="btn primary" href="#/time">+ Time</a>
@@ -334,7 +371,7 @@ const TIME = {
     { col: 'Project', type: 'select', options: () => projectOptions(false), required: true, editOptions: () => projectOptions(true), extra: '<div id="budget"></div>' },
     { col: 'Hours', type: 'number', step: '0.25', min: '0', required: true },
     { col: 'Task', type: 'text', list: () => distinct('Tasks', 'Task'), placeholder: 'What did you work on?', required: true },
-    { col: 'Worker', type: 'select', options: () => rows('Workers').map(w => w.Name), def: () => me, sticky: true },
+    { col: 'Worker', type: 'select', options: () => rows('Workers').map(w => w.Name), def: () => me, sticky: true, required: true },
     { col: 'Billable', type: 'check' },
     { col: 'Invoiced', type: 'check', editOnly: true },
     { col: 'Paid', type: 'check', editOnly: true },
@@ -634,7 +671,8 @@ function viewEntry(spec, view = $('#view'), editing = null) {
 
   const form = $('#entry');
   // populate
-  const sticky = ls.get('sticky:' + spec.key, {});
+  const stickyKey = `sticky:${spec.key}:${user.email}`;   // remembered per person, not per device
+  const sticky = ls.get(stickyKey, {});
   for (const fd of fields) {
     const el = form.elements[fd.col];
     let v = editing ? (fd.load ? fd.load(editing) : editing[fd.col]) : (fd.sticky && fd.col in sticky ? sticky[fd.col] : fd.def?.());
@@ -720,7 +758,7 @@ function viewEntry(spec, view = $('#view'), editing = null) {
     // remember sticky values
     const st = {};
     fields.filter(f => f.sticky).forEach(f => st[f.col] = values[f.col]);
-    ls.set('sticky:' + spec.key, st);
+    ls.set(stickyKey, st);
 
     form.dataset.saving = '1';
     try {
@@ -1620,7 +1658,7 @@ function viewSettings(view) {
       <div class="card">
         <h2>Account</h2>
         <p>Signed in as <b>${esc(user?.name)}</b><br><span class="muted">${esc(user?.email)}</span></p>
-        ${me ? `<p class="small muted">Matched to worker <b>${esc(me)}</b> in the Workers table.</p>` : ''}
+        <p class="small muted">${me ? `Matched to worker <b>${esc(me)}</b> in the Workers table.` : 'Not matched to anyone in the Workers table.'} <a href="#" id="whoami">${me ? 'Not you?' : 'Choose…'}</a></p>
         ${store.file ? `<p>Connected to <a href="${esc(store.file.webUrl)}" target="_blank" rel="noopener">${esc(store.file.name)}</a></p>` : ''}
         <div class="actions"><button class="btn" id="so">Sign out</button><button class="btn" id="clr">Clear activity log</button></div>
         <h2 style="margin-top:1.5rem">How your data is handled</h2>
@@ -1642,6 +1680,7 @@ function viewSettings(view) {
     await connect();
     location.hash = '#/dashboard';
   };
+  $('#whoami').onclick = async (e) => { e.preventDefault(); await askWhoYouAre(); viewSettings(view); };
   $('#so').onclick = () => store.logout();
   $('#clr').onclick = () => { ls.set('log', []); toast('Activity log cleared.', 'info'); };
 }
